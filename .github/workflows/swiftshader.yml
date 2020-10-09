@@ -14,34 +14,36 @@ jobs:
 
     - uses: actions/checkout@v2.0.0
 
+    # We are downloading a public package, so there is no need for an auth step right now.
     # This PAT only has `read:packages` enabled, and is saved as an Actions secret.
-    - name: Login to GitHub Container Registry
-      run: echo "${{ secrets.CR_PAT }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
+    #- name: Login to GitHub Container Registry
+    #  run: echo "${{ secrets.CR_PAT }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
 
     - name: Download Image with Pre-Built SwiftShader
       run: |
-          docker pull ghcr.io/prideout/filamentss.latest
-          docker tag ghcr.io/prideout/filamentss.latest ssfilament
+          docker pull ghcr.io/prideout/ssfilament:latest
+          docker tag ghcr.io/prideout/ssfilament:latest ssfilament
 
     - name: Build Filament with SwiftShader Support
       run: |
           docker run -v `pwd`:/trees/branch ssfilament branch/build.sh -t release
 
     - name: Test Filament
-      continue-on-error: true
-      timeout-minutes: 5
+      continue-on-error: true # TODO: Set this to false to prevent a false positive for the job.
+      timeout-minutes: 2      # Do not remove the timeout (segfaults seems to manifest as hangs)
       run: |
           export SPEC=/trees/branch/libs/viewer/tests/basic.json
           export TEST=/trees/branch/out/cmake-release/samples/gltf_viewer
+          export ARGS='--headless -a vulkan'
           mkdir results
+          touch results/dummy.txt
           echo Starting Filament...
-
-          # The hope behind --cpus and -t is to alleviate delays in GitHub's real-time log output.
-          docker run --cpus="1.5" -tv `pwd`:/trees/branch -w /trees/branch/results ssfilament $TEST --batch $SPEC --headless -a vulkan
+          docker run -tv `pwd`:/trees/branch -w /trees/branch/results ssfilament $TEST --batch $SPEC $ARGS
 
     # The results folder contains screenshots and settings files. If a segfault occurs, a core dump
-    # will also be available in the results folder.
+    # may be available in the results folder if "continue-on-error" in the previous step is enabled.
     - uses: actions/upload-artifact@v2
       with:
         name: results
         path: results
+        if-no-files-found: error
