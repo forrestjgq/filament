@@ -24,6 +24,7 @@
 
 #include <utils/Panic.h>
 #include <utils/trap.h>
+#include <utils/debug.h>
 
 #include <math.h>
 
@@ -78,10 +79,10 @@ MetalSwapChain::MetalSwapChain(MetalContext& context, int32_t width, int32_t hei
 
 MetalSwapChain::MetalSwapChain(MetalContext& context, CVPixelBufferRef pixelBuffer, uint64_t flags)
         : context(context), externalImage(context), type(SwapChainType::CVPIXELBUFFERREF) {
-    assert(flags & backend::SWAP_CHAIN_CONFIG_APPLE_CVPIXELBUFFER);
+    assert_invariant(flags & backend::SWAP_CHAIN_CONFIG_APPLE_CVPIXELBUFFER);
     MetalExternalImage::assertWritableImage(pixelBuffer);
     externalImage.set(pixelBuffer);
-    assert(externalImage.isValid());
+    assert_invariant(externalImage.isValid());
 }
 
 MetalSwapChain::~MetalSwapChain() {
@@ -138,7 +139,7 @@ id<MTLTexture> MetalSwapChain::acquireDrawable() {
         return externalImage.getMetalTextureForDraw();
     }
 
-    assert(isCaMetalLayer());
+    assert_invariant(isCaMetalLayer());
     drawable = [layer nextDrawable];
 
     ASSERT_POSTCONDITION(drawable != nil, "Could not obtain drawable.");
@@ -183,15 +184,23 @@ id<MTLTexture> MetalSwapChain::acquireDepthTexture() {
     return depthTexture;
 }
 
-void MetalSwapChain::setFrameFinishedCallback(FrameFinishedCallback callback, void* user) {
-    frameFinishedCallback = callback;
-    frameFinishedUserData = user;
+void MetalSwapChain::setFrameScheduledCallback(FrameScheduledCallback callback, void* user) {
+    frameScheduledCallback = callback;
+    frameScheduledUserData = user;
+}
+
+void MetalSwapChain::setFrameCompletedCallback(FrameCompletedCallback callback, void* user) {
+    frameCompletedCallback = callback;
+    frameCompletedUserData = user;
 }
 
 void MetalSwapChain::present() {
+    if (frameCompletedCallback) {
+        scheduleFrameCompletedCallback();
+    }
     if (drawable) {
-        if (frameFinishedCallback) {
-            scheduleFrameFinishedCallback();
+        if (frameScheduledCallback) {
+            scheduleFrameScheduledCallback();
         } else  {
             [getPendingCommandBuffer(&context) presentDrawable:drawable];
         }
@@ -207,18 +216,18 @@ void presentDrawable(bool presentFrame, void* user) {
     // The drawable will be released here when the "drawable" variable goes out of scope.
 }
 
-void MetalSwapChain::scheduleFrameFinishedCallback() {
-    if (!frameFinishedCallback) {
+void MetalSwapChain::scheduleFrameScheduledCallback() {
+    if (!frameScheduledCallback) {
         return;
     }
 
-    assert(drawable);
-    backend::FrameFinishedCallback callback = frameFinishedCallback;
+    assert_invariant(drawable);
+    backend::FrameScheduledCallback callback = frameScheduledCallback;
     // This block strongly captures drawable to keep it alive until the handler executes.
     // We cannot simply reference this->drawable inside the block because the block would then only
     // capture the _this_ pointer (MetalSwapChain*) instead of the drawable.
     id<CAMetalDrawable> d = drawable;
-    void* userData = frameFinishedUserData;
+    void* userData = frameScheduledUserData;
     [getPendingCommandBuffer(&context) addScheduledHandler:^(id<MTLCommandBuffer> cb) {
         // CFBridgingRetain is used here to give the drawable a +1 retain count before
         // casting it to a void*.
@@ -226,6 +235,34 @@ void MetalSwapChain::scheduleFrameFinishedCallback() {
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
             callback(callable, userData);
         });
+    }];
+}
+
+void MetalSwapChain::scheduleFrameCompletedCallback() {
+    if (!frameCompletedCallback) {
+        return;
+    }
+
+    backend::FrameCompletedCallback callback = frameCompletedCallback;
+    void* userData = frameCompletedUserData;
+    [getPendingCommandBuffer(&context) addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+        struct CallbackData {
+            void* userData;
+            backend::FrameCompletedCallback callback;
+        };
+        CallbackData* data = new CallbackData();
+        data->userData = userData;
+        data->callback = callback;
+
+        // Instantiate a BufferDescriptor with a callback for the sole purpose of passing it to
+        // scheduleDestroy. This forces the BufferDescriptor callback (and thus the
+        // FrameCompletedCallback) to be called on the user thread.
+        BufferDescriptor b(nullptr, 0u, [](void* buffer, size_t size, void* user) {
+            CallbackData* data = (CallbackData*) user;
+            data->callback(data->userData);
+            free(data);
+        }, data);
+        context.driver->scheduleDestroy(std::move(b));
     }];
 }
 
@@ -388,7 +425,7 @@ MetalTexture::MetalTexture(MetalContext& context, SamplerType target, uint8_t le
     metalPixelFormat = decidePixelFormat(context.device, reshapedFormat);
 
     bytesPerElement = static_cast<uint8_t>(getFormatSize(reshapedFormat));
-    assert(bytesPerElement > 0);
+    assert_invariant(bytesPerElement > 0);
     blockWidth = static_cast<uint8_t>(getBlockWidth(reshapedFormat));
     blockHeight = static_cast<uint8_t>(getBlockHeight(reshapedFormat));
 
@@ -520,8 +557,15 @@ void MetalTexture::load3DImage(uint32_t level, uint32_t xoffset, uint32_t yoffse
     id<MTLCommandBuffer> blitCommandBuffer = getPendingCommandBuffer(&context);
     id<MTLBlitCommandEncoder> blitCommandEncoder = [blitCommandBuffer blitCommandEncoder];
 
-    loadSlice(level, xoffset, yoffset, zoffset, width, height, depth, 0, 0, p,
-            blitCommandEncoder, blitCommandBuffer);
+    if (target == SamplerType::SAMPLER_2D_ARRAY) {
+        // Metal uses 'slice' (not z offset) to index into individual layers of the texture array.
+        loadSlice(level, xoffset, yoffset, 0, width, height, depth, 0, zoffset, p,
+                blitCommandEncoder, blitCommandBuffer);
+    } else {
+        assert_invariant(target == SamplerType::SAMPLER_3D);
+        loadSlice(level, xoffset, yoffset, zoffset, width, height, depth, 0, 0, p,
+                blitCommandEncoder, blitCommandBuffer);
+    }
 
     updateLodRange(level);
 
@@ -566,8 +610,8 @@ void MetalTexture::loadSlice(uint32_t level, uint32_t xoffset, uint32_t yoffset,
     const size_t sourceOffset = (data.left * bytesPerPixel) + (data.top * bytesPerRow) + byteOffset;
 
     if (data.type == PixelDataType::COMPRESSED) {
-        assert(blockWidth > 0);
-        assert(blockHeight > 0);
+        assert_invariant(blockWidth > 0);
+        assert_invariant(blockHeight > 0);
         // From https://developer.apple.com/documentation/metal/mtltexture/1515464-replaceregion:
         // For an ordinary or packed pixel format, the stride, in bytes, between rows of source
         // data. For a compressed pixel format, the stride is the number of bytes from the
@@ -714,7 +758,7 @@ void MetalRenderTarget::setUpRenderPassAttachments(MTLRenderPassDescriptor* desc
         if (multisampledColor[i]) {
             // We're rendering into our temporary MSAA texture and doing an automatic resolve.
             // We should not be attempting to load anything into the MSAA texture.
-            assert(descriptor.colorAttachments[i].loadAction != MTLLoadActionLoad);
+            assert_invariant(descriptor.colorAttachments[i].loadAction != MTLLoadActionLoad);
 
             descriptor.colorAttachments[i].texture = multisampledColor[i];
             descriptor.colorAttachments[i].level = 0;
@@ -740,7 +784,7 @@ void MetalRenderTarget::setUpRenderPassAttachments(MTLRenderPassDescriptor* desc
     if (multisampledDepth) {
         // We're rendering into our temporary MSAA texture and doing an automatic resolve.
         // We should not be attempting to load anything into the MSAA texture.
-        assert(descriptor.depthAttachment.loadAction != MTLLoadActionLoad);
+        assert_invariant(descriptor.depthAttachment.loadAction != MTLLoadActionLoad);
 
         descriptor.depthAttachment.texture = multisampledDepth;
         descriptor.depthAttachment.level = 0;
@@ -756,20 +800,20 @@ void MetalRenderTarget::setUpRenderPassAttachments(MTLRenderPassDescriptor* desc
 }
 
 MetalRenderTarget::Attachment MetalRenderTarget::getDrawColorAttachment(size_t index) {
-    assert(index < MRT::TARGET_COUNT);
+    assert_invariant(index < MRT::TARGET_COUNT);
     Attachment result = color[index];
     if (index == 0 && defaultRenderTarget) {
-        assert(context->currentDrawSwapChain);
+        assert_invariant(context->currentDrawSwapChain);
         result.texture = context->currentDrawSwapChain->acquireDrawable();
     }
     return result;
 }
 
 MetalRenderTarget::Attachment MetalRenderTarget::getReadColorAttachment(size_t index) {
-    assert(index < MRT::TARGET_COUNT);
+    assert_invariant(index < MRT::TARGET_COUNT);
     Attachment result = color[index];
     if (index == 0 && defaultRenderTarget) {
-        assert(context->currentReadSwapChain);
+        assert_invariant(context->currentReadSwapChain);
         result.texture = context->currentReadSwapChain->acquireDrawable();
     }
     return result;

@@ -22,6 +22,8 @@
 #include <utils/BitmaskEnum.h>
 #include <utils/unwindows.h> // Because we define ERROR in the FenceStatus enum.
 
+#include <backend/PresentCallable.h>
+
 #include <math/vec4.h>
 
 #include <array>    // FIXME: STL headers are not allowed in public headers
@@ -94,7 +96,6 @@ enum class TargetBufferFlags : uint8_t {
 };
 
 inline TargetBufferFlags getMRTColorFlag(size_t index) noexcept {
-    assert(index < 4);
     return TargetBufferFlags(1u << index);
 }
 
@@ -501,6 +502,7 @@ enum class TextureFormat : uint16_t {
 
 //! Bitmask describing the intended Texture Usage
 enum class TextureUsage : uint8_t {
+    NONE                = 0x0,
     COLOR_ATTACHMENT    = 0x1,                      //!< Texture can be used as a color attachment
     DEPTH_ATTACHMENT    = 0x2,                      //!< Texture can be used as a depth attachment
     STENCIL_ATTACHMENT  = 0x4,                      //!< Texture can be used as a stencil attachment
@@ -883,6 +885,11 @@ struct PolygonOffset {
     float slope = 0;        // factor in GL-speak
     float constant = 0;     // units in GL-speak
 };
+
+
+using FrameScheduledCallback = void(*)(backend::PresentCallable callable, void* user);
+
+using FrameCompletedCallback = void(*)(void* user);
 
 
 } // namespace backend

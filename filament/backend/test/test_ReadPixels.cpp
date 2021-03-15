@@ -238,7 +238,7 @@ TEST_F(BackendTest, ReadPixels) {
         params.viewport.width = t.getRenderTargetSize();
 
         getDriverApi().makeCurrent(swapChain, swapChain);
-        getDriverApi().beginFrame(0, 0, nullptr, nullptr);
+        getDriverApi().beginFrame(0, 0);
 
         // Render a white triangle over blue.
         getDriverApi().beginRenderPass(renderTarget, params);
@@ -278,7 +278,7 @@ TEST_F(BackendTest, ReadPixels) {
                 t.alignment, t.left, t.top, t.getPixelBufferStride(), [](void* buffer, size_t size,
                     void* user) {
                     const TestCase* test = (const TestCase*) user;
-                    assert(test);
+                    assert_invariant(test);
 
                     test->exportScreenshot(buffer);
 

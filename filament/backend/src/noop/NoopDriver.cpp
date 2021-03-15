@@ -48,8 +48,17 @@ void NoopDriver::terminate() {
 void NoopDriver::tick(int) {
 }
 
-void NoopDriver::beginFrame(int64_t monotonic_clock_ns, uint32_t frameId,
-        backend::FrameFinishedCallback, void*) {
+void NoopDriver::beginFrame(int64_t monotonic_clock_ns, uint32_t frameId) {
+}
+
+void NoopDriver::setFrameScheduledCallback(Handle<HwSwapChain> sch,
+        backend::FrameScheduledCallback callback, void* user) {
+
+}
+
+void NoopDriver::setFrameCompletedCallback(Handle<HwSwapChain> sch,
+        backend::FrameCompletedCallback callback, void* user) {
+
 }
 
 void NoopDriver::setPresentationTime(int64_t monotonic_clock_ns) {
@@ -151,6 +160,10 @@ bool NoopDriver::isFrameTimeSupported() {
     return true;
 }
 
+bool NoopDriver::areFeedbackLoopsSupported() {
+    return true;
+}
+
 math::float2 NoopDriver::getClipSpaceParams() {
     return math::float2{ -1.0f, 0.0f };
 }
@@ -169,6 +182,9 @@ void NoopDriver::update2DImage(Handle<HwTexture> th,
         uint32_t level, uint32_t xoffset, uint32_t yoffset, uint32_t width, uint32_t height,
         PixelBufferDescriptor&& data) {
     scheduleDestroy(std::move(data));
+}
+
+void NoopDriver::setMinMaxLevels(Handle<HwTexture> th, uint32_t minLevel, uint32_t maxLevel) {
 }
 
 void NoopDriver::update3DImage(Handle<HwTexture> th,
