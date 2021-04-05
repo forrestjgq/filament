@@ -42,6 +42,8 @@ export type BufferReference = string | ArrayBufferView;
 export type float2 = glm.vec2|number[];
 export type float3 = glm.vec3|number[];
 export type float4 = glm.vec4|number[];
+export type double2 = glm.vec2|number[];
+export type double3 = glm.vec3|number[];
 export type double4 = glm.vec4|number[];
 export type mat3 = glm.mat3|number[];
 export type mat4 = glm.mat4|number[];
@@ -104,6 +106,7 @@ export interface View$DepthOfFieldOptions {
     cocScale?: number;
     maxApertureDiameter?: number;
     enabled?: boolean;
+    filter?: View$DepthOfFieldOptions$Filter;
 }
 
 export interface View$BloomOptions {
@@ -398,7 +401,7 @@ export class Camera {
             near: number, far: number, fov: Camera$Fov): void;
     public setLensProjection(focalLength: number, aspect: number, near: number, far: number): void;
     public setCustomProjection(projection: mat4, near: number, far: number): void;
-    public setScaling(scale: double4): void;
+    public setScaling(scale: double2): void;
     public getProjectionMatrix(): mat4;
     public getCullingProjectionMatrix(): mat4;
     public getScaling(): double4;
@@ -418,7 +421,12 @@ export class Camera {
     public getAperture(): number;
     public getShutterSpeed(): number;
     public getSensitivity(): number;
+    public getFocalLength(): number;
+    public getFocusDistance(): number;
+    public setFocusDistance(distance: number): void;
     public static inverseProjection(p: mat4): mat4;
+    public static computeEffectiveFocalLength(focalLength: number, focusDistance: number) : number;
+    public static computeEffectiveFov(fovInDegrees: number, focusDistance: number) : number;
 }
 
 export class ColorGrading$Builder {
@@ -996,6 +1004,11 @@ export enum View$QualityLevel {
 export enum View$AmbientOcclusion {
     NONE,
     SSAO,
+}
+
+export enum View$DepthOfFieldOptions$Filter {
+    NONE,
+    MEDIAN = 2,
 }
 
 export enum View$BloomOptions$BlendMode {

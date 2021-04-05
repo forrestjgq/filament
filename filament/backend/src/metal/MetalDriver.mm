@@ -254,8 +254,8 @@ void MetalDriver::createRenderTargetR(Handle<HwRenderTarget> rth,
                 "Color texture passed to render target has no texture allocation");
         colorTexture->updateLodRange(buffer.level);
         colorAttachments[i].texture = colorTexture->texture;
-        colorAttachments[i].level = color[0].level;
-        colorAttachments[i].layer = color[0].layer;
+        colorAttachments[i].level = color[i].level;
+        colorAttachments[i].layer = color[i].layer;
     }
 
     MetalRenderTarget::Attachment depthAttachment = { 0 };
@@ -802,11 +802,11 @@ void MetalDriver::endRenderPass(int dummy) {
 }
 
 void MetalDriver::setRenderPrimitiveBuffer(Handle<HwRenderPrimitive> rph,
-        Handle<HwVertexBuffer> vbh, Handle<HwIndexBuffer> ibh, uint32_t enabledAttributes) {
+        Handle<HwVertexBuffer> vbh, Handle<HwIndexBuffer> ibh) {
     auto primitive = handle_cast<MetalRenderPrimitive>(mHandleMap, rph);
     auto vertexBuffer = handle_cast<MetalVertexBuffer>(mHandleMap, vbh);
     auto indexBuffer = handle_cast<MetalIndexBuffer>(mHandleMap, ibh);
-    primitive->setBuffers(vertexBuffer, indexBuffer, enabledAttributes);
+    primitive->setBuffers(vertexBuffer, indexBuffer);
 }
 
 void MetalDriver::setRenderPrimitiveRange(Handle<HwRenderPrimitive> rph,
