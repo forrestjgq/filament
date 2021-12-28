@@ -24,7 +24,13 @@
 #include <Metal/Metal.h>
 #include <QuartzCore/QuartzCore.h>
 
+#include <array>
 #include <stack>
+
+#if defined(FILAMENT_METAL_PROFILING)
+#include <os/log.h>
+#include <os/signpost.h>
+#endif
 
 #include <tsl/robin_set.h>
 
@@ -43,6 +49,8 @@ struct MetalIndexBuffer;
 struct MetalSamplerGroup;
 struct MetalVertexBuffer;
 
+constexpr static uint8_t MAX_SAMPLE_COUNT = 8;  // Metal devices support at most 8 MSAA samples
+
 struct MetalContext {
     MetalDriver* driver;
     id<MTLDevice> device = nullptr;
@@ -50,6 +58,18 @@ struct MetalContext {
 
     id<MTLCommandBuffer> pendingCommandBuffer = nullptr;
     id<MTLRenderCommandEncoder> currentRenderPassEncoder = nullptr;
+
+    // Supported features.
+    bool supportsTextureSwizzling = false;
+    uint8_t maxColorRenderTargets = 4;
+    struct {
+        uint8_t common;
+        uint8_t apple;
+        uint8_t mac;
+    } highestSupportedGpuFamily;
+
+    // sampleCountLookup[requestedSamples] gives a <= sample count supported by the device.
+    std::array<uint8_t, MAX_SAMPLE_COUNT + 1> sampleCountLookup;
 
     // Tracks resources used by command buffers.
     MetalResourceTracker resourceTracker;
@@ -96,7 +116,15 @@ struct MetalContext {
     TimerQueryInterface* timerQueryImpl;
 
     std::stack<const char*> groupMarkers;
+
+#if defined(FILAMENT_METAL_PROFILING)
+    // Logging and profiling.
+    os_log_t log;
+    os_signpost_id_t signpostId;
+#endif
 };
+
+void initializeSupportedGpuFamilies(MetalContext* context);
 
 id<MTLCommandBuffer> getPendingCommandBuffer(MetalContext* context);
 

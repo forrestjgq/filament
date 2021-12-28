@@ -31,13 +31,15 @@ import androidx.annotation.Nullable;
  * @see View
  */
 public class RenderTarget {
+    private static final int ATTACHMENT_COUNT = AttachmentPoint.values().length;
+    private static final Texture.CubemapFace[] sCubemapFaceValues = Texture.CubemapFace.values();
+
     private long mNativeObject;
-    private final Texture[] mTextures = new Texture[2];
+    private final Texture[] mTextures = new Texture[ATTACHMENT_COUNT];
 
     private RenderTarget(long nativeRenderTarget, Builder builder) {
         mNativeObject = nativeRenderTarget;
-        mTextures[0] = builder.mTextures[0];
-        mTextures[1] = builder.mTextures[1];
+        System.arraycopy(builder.mTextures, 0, mTextures, 0, ATTACHMENT_COUNT);
     }
 
     public long getNativeObject() {
@@ -52,7 +54,14 @@ public class RenderTarget {
      */
     public enum AttachmentPoint {
         COLOR,
-        DEPTH,
+        COLOR1,
+        COLOR2,
+        COLOR3,
+        COLOR4,
+        COLOR5,
+        COLOR6,
+        COLOR7,
+        DEPTH
     }
 
     /**
@@ -62,7 +71,7 @@ public class RenderTarget {
         @SuppressWarnings({"FieldCanBeLocal", "UnusedDeclaration"})
         private final BuilderFinalizer mFinalizer;
         private final long mNativeBuilder;
-        private final Texture[] mTextures = new Texture[2];
+        private final Texture[] mTextures = new Texture[ATTACHMENT_COUNT];
 
         public Builder() {
             mNativeBuilder = nCreateBuilder();
@@ -187,7 +196,7 @@ public class RenderTarget {
      * a cubemap.
      */
     public Texture.CubemapFace getFace(AttachmentPoint attachment) {
-        return Texture.CubemapFace.values()[nGetFace(getNativeObject(), attachment.ordinal())];
+        return sCubemapFaceValues[nGetFace(getNativeObject(), attachment.ordinal())];
     }
 
     /**

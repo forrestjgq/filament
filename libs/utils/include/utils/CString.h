@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef TNT_FILAMENT_CSTRING_H
-#define TNT_FILAMENT_CSTRING_H
+#ifndef TNT_UTILS_CSTRING_H
+#define TNT_UTILS_CSTRING_H
 
 // NOTE: this header should not include STL headers
 
@@ -82,8 +82,8 @@ public:
     constexpr StaticString() noexcept = default;
 
     // initialization from a string literal
-    template <size_t N>
-    StaticString(StringLiteral<N> const& other) noexcept // NOLINT(google-explicit-constructor)
+    template<size_t N>
+    constexpr StaticString(StringLiteral<N> const& other) noexcept // NOLINT(google-explicit-constructor)
         : mString(other),
           mLength(size_type(N - 1)),
           mHash(computeHash(other)) {
@@ -390,4 +390,4 @@ struct hash<utils::StaticString> {
 
 } // namespace std
 
-#endif // TNT_FILAMENT_CSTRING_H
+#endif // TNT_UTILS_CSTRING_H

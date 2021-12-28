@@ -1,5 +1,28 @@
+/*
+ * This is the main vertex shader of surface materials. It can be invoked with
+ * USE_OPTIMIZED_DEPTH_VERTEX_SHADER defined, and in this case we are guaranteed that the
+ * DEPTH variant is active *AND* there is no custom vertex shader (i.e.: materialVertex() is
+ * empty).
+ * We can use this to remove all code that doesn't participate in the depth computation.
+ */
+
 void main() {
     // Initialize the inputs to sensible default values, see material_inputs.vs
+#if defined(USE_OPTIMIZED_DEPTH_VERTEX_SHADER)
+
+    // In USE_OPTIMIZED_DEPTH_VERTEX_SHADER mode, we can even skip this if we're already in
+    // VERTEX_DOMAIN_DEVICE and we don't have VSM.
+#if !defined(VERTEX_DOMAIN_DEVICE) || defined(HAS_VSM)
+    // Run initMaterialVertex to compute material.worldPosition.
+    MaterialVertexInputs material;
+    initMaterialVertex(material);
+    // materialVertex() is guaranteed to be empty here, but we keep it to workaround some problem
+    // in NVIDA drivers related to depth invariance.
+    materialVertex(material);
+#endif
+
+#else // defined(USE_OPTIMIZED_DEPTH_VERTEX_SHADER)
+
     MaterialVertexInputs material;
     initMaterialVertex(material);
 
@@ -12,7 +35,7 @@ void main() {
         toTangentFrame(mesh_tangents, material.worldNormal, vertex_worldTangent.xyz);
 
         #if defined(HAS_SKINNING_OR_MORPHING)
-        if (objectUniforms.morphingEnabled == 1) {
+        if ((objectUniforms.flags & FILAMENT_OBJECT_MORPHING_ENABLED_BIT) != 0u) {
             vec3 normal0, normal1, normal2, normal3;
             toTangentFrame(mesh_custom4, normal0);
             toTangentFrame(mesh_custom5, normal1);
@@ -25,7 +48,7 @@ void main() {
             material.worldNormal = normalize(material.worldNormal);
         }
 
-        if (objectUniforms.skinningEnabled == 1) {
+        if ((objectUniforms.flags & FILAMENT_OBJECT_SKINNING_ENABLED_BIT) != 0u) {
             skinNormal(material.worldNormal, mesh_bone_indices, mesh_bone_weights);
             skinNormal(vertex_worldTangent.xyz, mesh_bone_indices, mesh_bone_weights);
         }
@@ -43,7 +66,7 @@ void main() {
         toTangentFrame(mesh_tangents, material.worldNormal);
 
         #if defined(HAS_SKINNING_OR_MORPHING)
-            if (objectUniforms.skinningEnabled == 1) {
+            if ((objectUniforms.flags & FILAMENT_OBJECT_SKINNING_ENABLED_BIT) != 0u) {
                 skinNormal(material.worldNormal, mesh_bone_indices, mesh_bone_weights);
             }
         #endif
@@ -82,24 +105,20 @@ void main() {
 #endif
 
     // The world position can be changed by the user in materialVertex()
-    vertex_worldPosition = material.worldPosition.xyz;
+    vertex_worldPosition.xyz = material.worldPosition.xyz;
+
 #ifdef HAS_ATTRIBUTE_TANGENTS
     vertex_worldNormal = material.worldNormal;
 #endif
 
 #if defined(HAS_SHADOWING) && defined(HAS_DIRECTIONAL_LIGHTING)
-    vertex_lightSpacePosition = computeLightSpacePosition(vertex_worldPosition, vertex_worldNormal,
-            frameUniforms.lightDirection, frameUniforms.shadowBias.y, getLightFromWorldMatrix());
+    vertex_lightSpacePosition = computeLightSpacePosition(
+            vertex_worldPosition.xyz, vertex_worldNormal,
+            frameUniforms.lightDirection, frameUniforms.shadowBias, getLightFromWorldMatrix());
 #endif
 
-#if defined(HAS_SHADOWING) && defined(HAS_DYNAMIC_LIGHTING)
-    for (uint l = 0u; l < uint(MAX_SHADOW_CASTING_SPOTS); l++) {
-        vec3 dir = shadowUniforms.directionShadowBias[l].xyz;
-        float bias = shadowUniforms.directionShadowBias[l].w;
-        vertex_spotLightSpacePosition[l] = computeLightSpacePosition(vertex_worldPosition,
-                vertex_worldNormal, dir, bias, getSpotLightFromWorldMatrix(l));
-    }
-#endif
+#endif // !defined(USE_OPTIMIZED_DEPTH_VERTEX_SHADER)
+
 
 #if defined(VERTEX_DOMAIN_DEVICE)
     // The other vertex domains are handled in initMaterialVertex()->computeWorldPosition()
@@ -108,8 +127,33 @@ void main() {
     gl_Position = getClipFromWorldMatrix() * getWorldPosition(material);
 #endif
 
+#if !defined(USE_OPTIMIZED_DEPTH_VERTEX_SHADER)
 #if defined(MATERIAL_HAS_CLIP_SPACE_TRANSFORM)
     gl_Position = getClipSpaceTransform(material) * gl_Position;
+#endif
+#endif // !USE_OPTIMIZED_DEPTH_VERTEX_SHADER
+
+#if defined(VERTEX_DOMAIN_DEVICE)
+    // GL convention to inverted DX convention (must happen after clipSpaceTransform)
+    gl_Position.z = gl_Position.z * -0.5 + 0.5;
+#endif
+
+#if defined(HAS_VSM)
+    // For VSM, we use the linear light-space Z coordinate as the depth metric, which works for both
+    // directional and spot lights and can be safely interpolated.
+    // The value is guaranteed to be between [-znear, -zfar] by construction of viewFromWorldMatrix,
+    // (see ShadowMap.cpp).
+    // Use vertex_worldPosition.w which is otherwise not used to store the interpolated
+    // light-space depth.
+    highp float z = (getViewFromWorldMatrix() * getWorldPosition(material)).z;
+
+    // rescale [near, far] to [0, 1]
+    highp float depth = -z * frameUniforms.oneOverFarMinusNear - frameUniforms.nearOverFarMinusNear;
+
+    // EVSM pre-mapping
+    depth = frameUniforms.vsmExponent * (depth * 2.0 - 1.0);
+
+    vertex_worldPosition.w = depth;
 #endif
 
     // this must happen before we compensate for vulkan below
@@ -120,5 +164,8 @@ void main() {
     gl_Position.y = -gl_Position.y;
 #endif
 
-    gl_Position.z = dot(gl_Position.zw, frameUniforms.clipControl.xy);
+#if !defined(TARGET_VULKAN_ENVIRONMENT) && !defined(TARGET_METAL_ENVIRONMENT)
+    // This is not needed in Vulkan or Metal because clipControl is always (1, 0)
+    gl_Position.z = dot(gl_Position.zw, frameUniforms.clipControl);
+#endif
 }

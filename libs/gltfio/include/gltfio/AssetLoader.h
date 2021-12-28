@@ -24,6 +24,8 @@
 #include <gltfio/FilamentInstance.h>
 #include <gltfio/MaterialProvider.h>
 
+#include <utils/compiler.h>
+
 namespace utils {
     class EntityManager;
     class NameComponentManager;
@@ -44,8 +46,8 @@ struct AssetConfiguration {
     class filament::Engine* engine;
 
     //! Controls whether the loader uses filamat to generate materials on the fly, or loads a small
-    //! set of precompiled ubershader materials. See createMaterialGenerator() and
-    //! createUbershaderLoader().
+    //! set of precompiled ubershader materials. Deleting the MaterialProvider is the client's
+    //! responsibility. See createMaterialGenerator() and createUbershaderLoader().
     MaterialProvider* materials;
 
     //! Optional manager for associating string names with entities in the transform hierarchy.
@@ -119,7 +121,7 @@ struct AssetConfiguration {
  * Engine::destroy(&engine);
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  */
-class AssetLoader {
+class UTILS_PUBLIC AssetLoader {
 public:
 
     /**
@@ -221,6 +223,8 @@ public:
     size_t getMaterialsCount() const noexcept;
 
     utils::NameComponentManager* getNames() const noexcept;
+
+    MaterialProvider* getMaterialProvider() const noexcept;
 
     /*! \cond PRIVATE */
 protected:

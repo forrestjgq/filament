@@ -19,7 +19,6 @@
 #include <filament/RenderableManager.h>
 #include <filament/TransformManager.h>
 #include <filament/LightManager.h>
-#include <filament/Material.h>
 #include <filament/View.h>
 #include <filament/Viewport.h>
 
@@ -42,7 +41,7 @@ using namespace filament::math;
 namespace filament {
 namespace viewer {
 
-filament::math::mat4f fitIntoUnitCube(const filament::Aabb& bounds) {
+filament::math::mat4f fitIntoUnitCube(const filament::Aabb& bounds, float zoffset) {
     using namespace filament::math;
     auto minpt = bounds.min;
     auto maxpt = bounds.max;
@@ -51,7 +50,7 @@ filament::math::mat4f fitIntoUnitCube(const filament::Aabb& bounds) {
     maxExtent = std::max(maxExtent, maxpt.z - minpt.z);
     float scaleFactor = 2.0f / maxExtent;
     float3 center = (minpt + maxpt) / 2.0f;
-    center.z += 4.0f / scaleFactor;
+    center.z += zoffset / scaleFactor;
     return mat4f::scaling(float3(scaleFactor)) * mat4f::translation(-center);
 }
 
@@ -119,6 +118,47 @@ static void computeCurvePlot(Settings& settings, float* curvePlot) {
     }
 }
 
+static void computeToneMapPlot(ColorGradingSettings& settings, float* plot) {
+    float hdrMax = 10.0f;
+    ToneMapper* mapper;
+    switch (settings.toneMapping) {
+        case ToneMapping::LINEAR:
+            mapper = new LinearToneMapper;
+            break;
+        case ToneMapping::ACES_LEGACY:
+            mapper = new ACESLegacyToneMapper;
+            break;
+        case ToneMapping::ACES:
+            mapper = new ACESToneMapper;
+            break;
+        case ToneMapping::FILMIC:
+            mapper = new FilmicToneMapper;
+            break;
+        case ToneMapping::GENERIC:
+            mapper = new GenericToneMapper(
+                    settings.genericToneMapper.contrast,
+                    settings.genericToneMapper.shoulder,
+                    settings.genericToneMapper.midGrayIn,
+                    settings.genericToneMapper.midGrayOut,
+                    settings.genericToneMapper.hdrMax
+            );
+            hdrMax = settings.genericToneMapper.hdrMax;
+            break;
+        case ToneMapping::DISPLAY_RANGE:
+            mapper = new DisplayRangeToneMapper;
+            break;
+    }
+
+    float a = std::log10(hdrMax * 1.5f / 1e-6f);
+    for (size_t i = 0; i < 1024; i++) {
+        float v = i;
+        float x = 1e-6f * std::pow(10.0f, a * v / 1023.0f);
+        plot[i] = (*mapper)(x).r;
+    }
+
+    delete mapper;
+}
+
 static void tooltipFloat(float value) {
     if (ImGui::IsItemActive() || ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%.2f", value);
@@ -134,10 +174,10 @@ static void pushSliderColors(float hue) {
 
 static void popSliderColors() { ImGui::PopStyleColor(4); }
 
-static void colorGradingUI(Settings& settings, float* rangePlot, float* curvePlot) {
+static void colorGradingUI(Settings& settings, float* rangePlot, float* curvePlot, float* toneMapPlot) {
     const static ImVec2 verticalSliderSize(18.0f, 160.0f);
-    const static ImVec2 plotLinesSize(260.0f, 160.0f);
-    const static ImVec2 plotLinesWideSize(350.0f, 120.0f);
+    const static ImVec2 plotLinesSize(0.0f, 160.0f);
+    const static ImVec2 plotLinesWideSize(0.0f, 120.0f);
 
     if (ImGui::CollapsingHeader("Color grading")) {
         ColorGradingSettings& colorGrading = settings.view.colorGrading;
@@ -151,8 +191,30 @@ static void colorGradingUI(Settings& settings, float* rangePlot, float* curvePlo
 
         int toneMapping = (int) colorGrading.toneMapping;
         ImGui::Combo("Tone-mapping", &toneMapping,
-                "Linear\0ACES (legacy)\0ACES\0Filmic\0Uchimura\0Reinhard\0Display Range\0\0");
+                "Linear\0ACES (legacy)\0ACES\0Filmic\0Generic\0Display Range\0\0");
         colorGrading.toneMapping = (decltype(colorGrading.toneMapping)) toneMapping;
+        if (colorGrading.toneMapping == ToneMapping::GENERIC) {
+            if (ImGui::CollapsingHeader("Tonemap parameters")) {
+                GenericToneMapperSettings& generic = colorGrading.genericToneMapper;
+                ImGui::SliderFloat("Contrast##genericToneMapper", &generic.contrast, 1e-5f, 3.0f);
+                ImGui::SliderFloat("Shoulder##genericToneMapper", &generic.shoulder, 0.0f, 1.0f);
+                ImGui::SliderFloat("Mid-gray in##genericToneMapper", &generic.midGrayIn, 0.0f, 1.0f);
+                ImGui::SliderFloat("Mid-gray out##genericToneMapper", &generic.midGrayOut, 0.0f, 1.0f);
+                ImGui::SliderFloat("HDR max", &generic.hdrMax, 1.0f, 64.0f);
+            }
+        }
+
+        computeToneMapPlot(colorGrading, toneMapPlot);
+
+        ImGui::PushStyleColor(ImGuiCol_PlotLines, (ImVec4) ImColor::HSV(0.17f, 0.21f, 0.9f));
+        ImGui::PlotLines("", toneMapPlot, 1024, 0, "Tone map", 0.0f, 1.05f, ImVec2(0, 160));
+        ImGui::PopStyleColor();
+
+        ImGui::Checkbox("Luminance scaling", &colorGrading.luminanceScaling);
+        ImGui::Checkbox("Gamut mapping", &colorGrading.gamutMapping);
+
+        ImGui::SliderFloat("Exposure", &colorGrading.exposure, -10.0f, 10.0f);
+        ImGui::SliderFloat("Night adaptation", &colorGrading.nightAdaptation, 0.0f, 1.0f);
 
         if (ImGui::CollapsingHeader("White balance")) {
             int temperature = colorGrading.temperature * 100.0f;
@@ -309,7 +371,7 @@ SimpleViewer::SimpleViewer(filament::Engine* engine, filament::Scene* scene, fil
     mSettings.view.vsmShadowOptions.anisotropy = 0;
     mSettings.view.dithering = Dithering::TEMPORAL;
     mSettings.view.antiAliasing = AntiAliasing::FXAA;
-    mSettings.view.sampleCount = 4;
+    mSettings.view.msaa = { .enabled = true, .sampleCount = 4 };
     mSettings.view.ssao.enabled = true;
     mSettings.view.bloom.enabled = true;
 
@@ -319,9 +381,9 @@ SimpleViewer::SimpleViewer(filament::Engine* engine, filament::Scene* scene, fil
         .intensity(mSettings.lighting.sunlightIntensity)
         .direction(normalize(mSettings.lighting.sunlightDirection))
         .castShadows(true)
-        .sunAngularRadius(1.9)
-        .sunHaloSize(10.0)
-        .sunHaloFalloff(80.0)
+        .sunAngularRadius(1.0f)
+        .sunHaloSize(2.0f)
+        .sunHaloFalloff(80.0f)
         .build(*engine, mSunlight);
     if (mSettings.lighting.enableSunlight) {
         mScene->addEntity(mSunlight);
@@ -334,8 +396,7 @@ SimpleViewer::~SimpleViewer() {
     delete mImGuiHelper;
 }
 
-void SimpleViewer::populateScene(FilamentAsset* asset, bool scale,
-        FilamentInstance* instanceToAnimate) {
+void SimpleViewer::populateScene(FilamentAsset* asset,  FilamentInstance* instanceToAnimate) {
     if (mAsset != asset) {
         removeAsset();
         mAsset = asset;
@@ -345,13 +406,7 @@ void SimpleViewer::populateScene(FilamentAsset* asset, bool scale,
             return;
         }
         mAnimator = instanceToAnimate ? instanceToAnimate->getAnimator() : asset->getAnimator();
-        if (scale) {
-            auto& tcm = mEngine->getTransformManager();
-            auto root = tcm.getInstance(mAsset->getRoot());
-            filament::math::mat4f transform = fitIntoUnitCube(mAsset->getBoundingBox());
-            tcm.setTransform(root, transform);
-        }
-
+        updateRootTransform();
         mScene->addEntities(asset->getLightEntities(), asset->getLightEntityCount());
     }
 
@@ -384,11 +439,26 @@ void SimpleViewer::setIndirectLight(filament::IndirectLight* ibl,
     if (ibl) {
         float3 d = filament::IndirectLight::getDirectionEstimate(sh3);
         float4 c = filament::IndirectLight::getColorEstimate(sh3, d);
-        mSettings.lighting.sunlightDirection = d;
-        mSettings.lighting.sunlightColor = c.rgb;
-        mSettings.lighting.sunlightIntensity = c[3] * ibl->getIntensity();
-        updateIndirectLight();
+        if (!std::isnan(d.x * d.y * d.z)) {
+            mSettings.lighting.sunlightDirection = d;
+            mSettings.lighting.sunlightColor = c.rgb;
+            mSettings.lighting.sunlightIntensity = c[3] * ibl->getIntensity();
+            updateIndirectLight();
+        }
     }
+}
+
+void SimpleViewer::updateRootTransform() {
+    if (mAsset == nullptr) {
+        return;
+    }
+    auto& tcm = mEngine->getTransformManager();
+    auto root = tcm.getInstance(mAsset->getRoot());
+    filament::math::mat4f transform;
+    if (mSettings.viewer.autoScaleEnabled) {
+        transform = fitIntoUnitCube(mAsset->getBoundingBox(), 4);
+    }
+    tcm.setTransform(root, transform);
 }
 
 void SimpleViewer::updateIndirectLight() {
@@ -418,32 +488,77 @@ void SimpleViewer::applyAnimation(double currentTime) {
     mAnimator->updateBoneMatrices();
 }
 
-void SimpleViewer::renderUserInterface(float timeStepInSeconds, View* guiView, float pixelRatio,
-        float mouseX, float mouseY, bool mouseButton, float mouseWheelY) {
+void SimpleViewer::renderUserInterface(float timeStepInSeconds, View* guiView, float pixelRatio) {
     if (mImGuiHelper == nullptr) {
         mImGuiHelper = new ImGuiHelper(mEngine, guiView, "");
+
+        auto& io = ImGui::GetIO();
+
+        // The following table uses normal ANSI codes, which is consistent with the keyCode that
+        // comes from a web "keydown" event.
+        io.KeyMap[ImGuiKey_Tab] = 9;
+        io.KeyMap[ImGuiKey_LeftArrow] = 37;
+        io.KeyMap[ImGuiKey_RightArrow] = 39;
+        io.KeyMap[ImGuiKey_UpArrow] = 38;
+        io.KeyMap[ImGuiKey_DownArrow] = 40;
+        io.KeyMap[ImGuiKey_Home] = 36;
+        io.KeyMap[ImGuiKey_End] = 35;
+        io.KeyMap[ImGuiKey_Delete] = 46;
+        io.KeyMap[ImGuiKey_Backspace] = 8;
+        io.KeyMap[ImGuiKey_Enter] = 13;
+        io.KeyMap[ImGuiKey_Escape] = 27;
+        io.KeyMap[ImGuiKey_A] = 65;
+        io.KeyMap[ImGuiKey_C] = 67;
+        io.KeyMap[ImGuiKey_V] = 86;
+        io.KeyMap[ImGuiKey_X] = 88;
+        io.KeyMap[ImGuiKey_Y] = 89;
+        io.KeyMap[ImGuiKey_Z] = 90;
 
         // TODO: this is not the best way to handle high DPI in ImGui, but it is fine when using the
         // proggy font. Users need to refresh their window when dragging between displays with
         // different pixel ratios.
-        ImGui::GetIO().FontGlobalScale = pixelRatio;
+        io.FontGlobalScale = pixelRatio;
         ImGui::GetStyle().ScaleAllSizes(pixelRatio);
     }
 
     const auto size = guiView->getViewport();
     mImGuiHelper->setDisplaySize(size.width, size.height, 1, 1);
 
-    ImGuiIO& io = ImGui::GetIO();
-    io.MousePos.x = mouseX;
-    io.MousePos.y = mouseY;
-    io.MouseWheel += mouseWheelY;
-    io.MouseDown[0] = mouseButton;
-    io.MouseDown[1] = false;
-    io.MouseDown[2] = false;
-
     mImGuiHelper->render(timeStepInSeconds, [this](Engine*, View*) {
         this->updateUserInterface();
     });
+}
+
+void SimpleViewer::mouseEvent(float mouseX, float mouseY, bool mouseButton, float mouseWheelY,
+        bool control) {
+    if (mImGuiHelper) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.MousePos.x = mouseX;
+        io.MousePos.y = mouseY;
+        io.MouseWheel += mouseWheelY;
+        io.MouseDown[0] = mouseButton != 0;
+        io.MouseDown[1] = false;
+        io.MouseDown[2] = false;
+        io.KeyCtrl = control;
+    }
+}
+
+void SimpleViewer::keyDownEvent(int keyCode) {
+    if (mImGuiHelper && keyCode < IM_ARRAYSIZE(ImGui::GetIO().KeysDown)) {
+        ImGui::GetIO().KeysDown[keyCode] = true;
+    }
+}
+
+void SimpleViewer::keyUpEvent(int keyCode) {
+    if (mImGuiHelper && keyCode < IM_ARRAYSIZE(ImGui::GetIO().KeysDown)) {
+        ImGui::GetIO().KeysDown[keyCode] = false;
+    }
+}
+
+void SimpleViewer::keyPressEvent(int charCode) {
+    if (mImGuiHelper) {
+        ImGui::GetIO().AddInputCharacter(charCode);
+    }
 }
 
 void SimpleViewer::updateUserInterface() {
@@ -553,29 +668,32 @@ void SimpleViewer::updateUserInterface() {
     if (ImGui::CollapsingHeader("View")) {
         ImGui::Indent();
 
-        bool dither = mSettings.view.dithering == Dithering::TEMPORAL;
-        ImGui::Checkbox("Dithering", &dither);
-        enableDithering(dither);
+        ImGui::Checkbox("Post-processing", &mSettings.view.postProcessingEnabled);
+        ImGui::Indent();
+            bool dither = mSettings.view.dithering == Dithering::TEMPORAL;
+            ImGui::Checkbox("Dithering", &dither);
+            enableDithering(dither);
+            ImGui::Checkbox("Bloom", &mSettings.view.bloom.enabled);
+            ImGui::Checkbox("Flare", &mSettings.view.bloom.lensFlare);
 
-        bool msaa = mSettings.view.sampleCount != 1;
-        ImGui::Checkbox("MSAA 4x", &msaa);
-        enableMsaa(msaa);
+            ImGui::Checkbox("TAA", &mSettings.view.taa.enabled);
+            // this clutters the UI and isn't that useful (except when working on TAA)
+            //ImGui::Indent();
+            //ImGui::SliderFloat("feedback", &mSettings.view.taa.feedback, 0.0f, 1.0f);
+            //ImGui::SliderFloat("filter", &mSettings.view.taa.filterWidth, 0.0f, 2.0f);
+            //ImGui::Unindent();
 
-        ImGui::Checkbox("TAA", &mSettings.view.taa.enabled);
+            bool fxaa = mSettings.view.antiAliasing == AntiAliasing::FXAA;
+            ImGui::Checkbox("FXAA", &fxaa);
+            enableFxaa(fxaa);
+        ImGui::Unindent();
 
-        // this clutters the UI and isn't that useful (except when working on TAA)
-        //ImGui::Indent();
-        //ImGui::SliderFloat("feedback", &mSettings.view.taa.feedback, 0.0f, 1.0f);
-        //ImGui::SliderFloat("filter", &mSettings.view.taa.filterWidth, 0.0f, 2.0f);
-        //ImGui::Unindent();
-
-        bool fxaa = mSettings.view.antiAliasing == AntiAliasing::FXAA;
-        ImGui::Checkbox("FXAA", &fxaa);
-        enableFxaa(fxaa);
+        ImGui::Checkbox("MSAA 4x", &mSettings.view.msaa.enabled);
+        ImGui::Indent();
+            ImGui::Checkbox("Custom resolve", &mSettings.view.msaa.customResolve);
+        ImGui::Unindent();
 
         ImGui::Checkbox("SSAO", &mSettings.view.ssao.enabled);
-        ImGui::Checkbox("Bloom", &mSettings.view.bloom.enabled);
-
         if (ImGui::CollapsingHeader("SSAO Options")) {
             auto& ssao = mSettings.view.ssao;
 
@@ -583,10 +701,16 @@ void SimpleViewer::updateUserInterface() {
             int lowpass = (int) ssao.lowPassFilter;
             bool upsampling = ssao.upsampling != View::QualityLevel::LOW;
 
+            bool halfRes = ssao.resolution == 1.0f ? false : true;
             ImGui::SliderInt("Quality", &quality, 0, 3);
             ImGui::SliderInt("Low Pass", &lowpass, 0, 2);
+            ImGui::Checkbox("Bent Normals", &ssao.bentNormals);
             ImGui::Checkbox("High quality upsampling", &upsampling);
             ImGui::SliderFloat("Min Horizon angle", &ssao.minHorizonAngleRad, 0.0f, (float)M_PI_4);
+            ImGui::SliderFloat("Bilateral Threshold", &ssao.bilateralThreshold, 0.0f, 0.1f);
+            ImGui::Checkbox("Half resolution", &halfRes);
+            ssao.resolution = halfRes ? 0.5f : 1.0f;
+
 
             ssao.upsampling = upsampling ? View::QualityLevel::HIGH : View::QualityLevel::LOW;
             ssao.lowPassFilter = (View::QualityLevel) lowpass;
@@ -609,40 +733,75 @@ void SimpleViewer::updateUserInterface() {
         ImGui::Unindent();
     }
 
+    if (ImGui::CollapsingHeader("Dynamic Resolution")) {
+        auto& dsr = mSettings.view.dsr;
+        int quality = (int)dsr.quality;
+        ImGui::Checkbox("enabled", &dsr.enabled);
+        ImGui::Checkbox("homogeneous", &dsr.homogeneousScaling);
+        ImGui::SliderFloat("min. scale", &dsr.minScale.x, 0.25f, 1.0f);
+        ImGui::SliderFloat("max. scale", &dsr.maxScale.x, 0.25f, 1.0f);
+        ImGui::SliderInt("quality", &quality, 0, 3);
+        ImGui::SliderFloat("sharpness", &dsr.sharpness, 0.0f, 1.0f);
+        dsr.minScale.x = std::min(dsr.minScale.x, dsr.maxScale.x);
+        dsr.minScale.y = dsr.minScale.x;
+        dsr.maxScale.y = dsr.maxScale.x;
+        dsr.quality = (QualityLevel)quality;
+    }
+
     auto& light = mSettings.lighting;
     if (ImGui::CollapsingHeader("Light")) {
         ImGui::Indent();
-        ImGui::SliderFloat("IBL intensity", &light.iblIntensity, 0.0f, 100000.0f);
-        ImGui::SliderAngle("IBL rotation", &light.iblRotation);
-        ImGui::SliderFloat("Sun intensity", &light.sunlightIntensity, 50000.0, 150000.0f);
-        ImGuiExt::DirectionWidget("Sun direction", light.sunlightDirection.v);
-        ImGui::Checkbox("Enable sunlight", &light.enableSunlight);
-        ImGui::Checkbox("Enable shadows", &light.enableShadows);
+        if (ImGui::CollapsingHeader("Indirect light")) {
+            ImGui::SliderFloat("IBL intensity", &light.iblIntensity, 0.0f, 100000.0f);
+            ImGui::SliderAngle("IBL rotation", &light.iblRotation);
+        }
+        if (ImGui::CollapsingHeader("Sunlight")) {
+            ImGui::Checkbox("Enable sunlight", &light.enableSunlight);
+            ImGui::SliderFloat("Sun intensity", &light.sunlightIntensity, 50000.0, 150000.0f);
+            ImGuiExt::DirectionWidget("Sun direction", light.sunlightDirection.v);
+        }
+        if (ImGui::CollapsingHeader("All lights")) {
+            ImGui::Checkbox("Enable shadows", &light.enableShadows);
+            int mapSize = light.shadowOptions.mapSize;
+            ImGui::SliderInt("Shadow map size", &mapSize, 32, 1024);
+            light.shadowOptions.mapSize = mapSize;
 
-        bool enableVsm = mSettings.view.shadowType == ShadowType::VSM;
-        ImGui::Checkbox("Enable VSM", &enableVsm);
-        mSettings.view.shadowType = enableVsm ? ShadowType::VSM : ShadowType::PCF;
 
-        char label[32];
-        snprintf(label, 32, "%d", 1 << mVsmMsaaSamplesLog2);
-        ImGui::SliderInt("VSM MSAA samples", &mVsmMsaaSamplesLog2, 0, 3, label);
-        light.shadowOptions.vsm.msaaSamples = static_cast<uint8_t>(1u << mVsmMsaaSamplesLog2);
+            int shadowType = (int)mSettings.view.shadowType;
+            ImGui::Combo("Shadow type", &shadowType, "PCF\0VSM\0DPCF\0\0");
+            mSettings.view.shadowType = (ShadowType)shadowType;
 
-        int vsmAnisotropy = mSettings.view.vsmShadowOptions.anisotropy;
-        snprintf(label, 32, "%d", 1 << vsmAnisotropy);
-        ImGui::SliderInt("VSM anisotropy", &vsmAnisotropy, 0, 3, label);
-        mSettings.view.vsmShadowOptions.anisotropy = vsmAnisotropy;
+            if (mSettings.view.shadowType == ShadowType::VSM) {
+                char label[32];
+                snprintf(label, 32, "%d", 1 << mVsmMsaaSamplesLog2);
+                ImGui::SliderInt("VSM MSAA samples", &mVsmMsaaSamplesLog2, 0, 3, label);
+                light.shadowOptions.vsm.msaaSamples =
+                        static_cast<uint8_t>(1u << mVsmMsaaSamplesLog2);
 
-        int shadowCascades = light.shadowOptions.shadowCascades;
-        ImGui::SliderInt("Cascades", &shadowCascades, 1, 4);
-        ImGui::Checkbox("Debug cascades",
-                debug.getPropertyAddress<bool>("d.shadowmap.visualize_cascades"));
-        ImGui::Checkbox("Enable contact shadows", &light.shadowOptions.screenSpaceContactShadows);
-        ImGui::SliderFloat("Split pos 0", &light.shadowOptions.cascadeSplitPositions[0], 0.0f, 1.0f);
-        ImGui::SliderFloat("Split pos 1", &light.shadowOptions.cascadeSplitPositions[1], 0.0f, 1.0f);
-        ImGui::SliderFloat("Split pos 2", &light.shadowOptions.cascadeSplitPositions[2], 0.0f, 1.0f);
+                int vsmAnisotropy = mSettings.view.vsmShadowOptions.anisotropy;
+                snprintf(label, 32, "%d", 1 << vsmAnisotropy);
+                ImGui::SliderInt("VSM anisotropy", &vsmAnisotropy, 0, 3, label);
+                mSettings.view.vsmShadowOptions.anisotropy = vsmAnisotropy;
+                ImGui::Checkbox("VSM mipmapping", &mSettings.view.vsmShadowOptions.mipmapping);
+                ImGui::SliderFloat("VSM blur", &light.shadowOptions.vsm.blurWidth, 0.0f, 125.0f);
+
+                // These are not very useful in practice (defaults are good), but we keep them here for debugging
+                //ImGui::SliderFloat("VSM exponent", &mSettings.view.vsmShadowOptions.exponent, 0.0, 6.0f);
+                //ImGui::SliderFloat("VSM Light bleed", &mSettings.view.vsmShadowOptions.lightBleedReduction, 0.0, 1.0f);
+                //ImGui::SliderFloat("VSM min variance scale", &mSettings.view.vsmShadowOptions.minVarianceScale, 0.0, 10.0f);
+            }
+
+            int shadowCascades = light.shadowOptions.shadowCascades;
+            ImGui::SliderInt("Cascades", &shadowCascades, 1, 4);
+            ImGui::Checkbox("Debug cascades",
+                    debug.getPropertyAddress<bool>("d.shadowmap.visualize_cascades"));
+            ImGui::Checkbox("Enable contact shadows", &light.shadowOptions.screenSpaceContactShadows);
+            ImGui::SliderFloat("Split pos 0", &light.shadowOptions.cascadeSplitPositions[0], 0.0f, 1.0f);
+            ImGui::SliderFloat("Split pos 1", &light.shadowOptions.cascadeSplitPositions[1], 0.0f, 1.0f);
+            ImGui::SliderFloat("Split pos 2", &light.shadowOptions.cascadeSplitPositions[2], 0.0f, 1.0f);
+            light.shadowOptions.shadowCascades = shadowCascades;
+        }
         ImGui::Unindent();
-        light.shadowOptions.shadowCascades = shadowCascades;
     }
 
     if (ImGui::CollapsingHeader("Fog")) {
@@ -661,6 +820,10 @@ void SimpleViewer::updateUserInterface() {
 
     if (ImGui::CollapsingHeader("Scene")) {
         ImGui::Indent();
+
+        ImGui::Checkbox("Scale to unit cube", &mSettings.viewer.autoScaleEnabled);
+        updateRootTransform();
+
         ImGui::Checkbox("Show skybox", &mSettings.viewer.skyboxEnabled);
         ImGui::ColorEdit3("Background color", &mSettings.viewer.backgroundColor.r);
 
@@ -678,24 +841,34 @@ void SimpleViewer::updateUserInterface() {
     if (ImGui::CollapsingHeader("Camera")) {
         ImGui::Indent();
 
-        // We do not yet support focal length in remote mode (i.e. when mAsset is null)
-        if (mAsset) {
-            ImGui::SliderFloat("Focal length (mm)", &mSettings.viewer.cameraFocalLength,
-                    16.0f, 90.0f);
-        }
+        ImGui::SliderFloat("Focal length (mm)", &mSettings.viewer.cameraFocalLength,
+                16.0f, 90.0f);
 
-        bool median = mSettings.view.dof.filter == View::DepthOfFieldOptions::Filter::MEDIAN;
+        bool dofMedian = mSettings.view.dof.filter == View::DepthOfFieldOptions::Filter::MEDIAN;
+        int dofRingCount = mSettings.view.dof.fastGatherRingCount;
+        int dofMaxCoC = mSettings.view.dof.maxForegroundCOC;
+        if (!dofRingCount) dofRingCount = 5;
+        if (!dofMaxCoC) dofMaxCoC = 32;
 
         ImGui::SliderFloat("Aperture", &mSettings.viewer.cameraAperture, 1.0f, 32.0f);
         ImGui::SliderFloat("Speed (1/s)", &mSettings.viewer.cameraSpeed, 1000.0f, 1.0f);
         ImGui::SliderFloat("ISO", &mSettings.viewer.cameraISO, 25.0f, 6400.0f);
         ImGui::Checkbox("DoF", &mSettings.view.dof.enabled);
-        ImGui::SliderFloat("Focus distance", &mSettings.view.dof.focusDistance, 0.0f, 30.0f);
+        ImGui::SliderFloat("Focus distance", &mSettings.viewer.cameraFocusDistance, 0.0f, 30.0f);
         ImGui::SliderFloat("Blur scale", &mSettings.view.dof.cocScale, 0.1f, 10.0f);
-        ImGui::Checkbox("Median Filter", &median);
-        mSettings.view.dof.filter = median ?
-                View::DepthOfFieldOptions::Filter::MEDIAN :
-                View::DepthOfFieldOptions::Filter::NONE;
+        ImGui::SliderInt("Ring count", &dofRingCount, 1, 17);
+        ImGui::SliderInt("Max CoC", &dofMaxCoC, 1, 32);
+        ImGui::Checkbox("Native Resolution", &mSettings.view.dof.nativeResolution);
+        ImGui::Checkbox("Median Filter", &dofMedian);
+
+        mSettings.view.dof.filter = dofMedian ?
+                                    View::DepthOfFieldOptions::Filter::MEDIAN :
+                                    View::DepthOfFieldOptions::Filter::NONE;
+        mSettings.view.dof.backgroundRingCount = dofRingCount;
+        mSettings.view.dof.foregroundRingCount = dofRingCount;
+        mSettings.view.dof.fastGatherRingCount = dofRingCount;
+        mSettings.view.dof.maxForegroundCOC = dofMaxCoC;
+        mSettings.view.dof.maxBackgroundCOC = dofMaxCoC;
 
         if (ImGui::CollapsingHeader("Vignette")) {
             ImGui::Checkbox("Enabled##vignetteEnabled", &mSettings.view.vignette.enabled);
@@ -705,6 +878,8 @@ void SimpleViewer::updateUserInterface() {
             ImGui::ColorEdit3("Color##vignetteColor", &mSettings.view.vignette.color.r);
         }
 
+        // We do not yet support camera selection in the remote UI. To support this feature, we
+        // would need to send a message from DebugServer to the WebSockets client.
         if (mAsset != nullptr) {
 
             const utils::Entity* cameras = mAsset->getCameraEntities();
@@ -737,7 +912,7 @@ void SimpleViewer::updateUserInterface() {
         ImGui::Unindent();
     }
 
-    colorGradingUI(mSettings, mRangePlot, mCurvePlot);
+    colorGradingUI(mSettings, mRangePlot, mCurvePlot, mToneMapPlot);
 
     // At this point, all View settings have been modified,
     //  so we can now push them into the Filament View.
@@ -768,6 +943,8 @@ void SimpleViewer::updateUserInterface() {
             ImGui::Unindent();
         }
 
+        // We do not yet support animation selection in the remote UI. To support this feature, we
+        // would need to send a message from DebugServer to the WebSockets client.
         if (mAnimator && mAnimator->getAnimationCount() > 0 &&
                 ImGui::CollapsingHeader("Animation")) {
             ImGui::Indent();

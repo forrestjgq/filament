@@ -23,16 +23,19 @@
 
 namespace utils {
 class Entity;
+class EntityManager;
 class JobSystem;
 } // namespace utils
 
 namespace filament {
 
+class BufferObject;
 class Camera;
 class ColorGrading;
 class DebugRegistry;
 class Fence;
 class IndexBuffer;
+class SkinningBuffer;
 class IndirectLight;
 class Material;
 class MaterialInstance;
@@ -302,11 +305,34 @@ public:
      */
     static void destroy(Engine* engine);
 
+    /**
+     * @return EntityManager used by filament
+     */
+    utils::EntityManager& getEntityManager() noexcept;
+
+    /**
+     * @return RenderableManager reference
+     */
     RenderableManager& getRenderableManager() noexcept;
 
+    /**
+     * @return LightManager reference
+     */
     LightManager& getLightManager() noexcept;
 
+    /**
+     * @return TransformManager reference
+     */
     TransformManager& getTransformManager() noexcept;
+
+    /**
+     * Helper to enable accurate translations.
+     * If you need this Engine to handle a very large world space, one way to achieve this
+     * automatically is to enable accurate translations in the TransformManager. This helper
+     * provides a convenient way of doing that.
+     * This is typically called once just after creating the Engine.
+     */
+    void enableAccurateTranslations() noexcept;
 
     /**
      * Creates a SwapChain from the given Operating System's native window handle.
@@ -372,7 +398,7 @@ public:
      * @param entity An entity.
      * @return A pointer to the Camera component for this entity or nullptr if the entity didn't
      *         have a Camera component. The pointer is valid until destroyCameraComponent()
-     *         (or destroyCamera()) is called or the entity itself is destroyed.
+     *         is called or the entity itself is destroyed.
      */
     Camera* getCameraComponent(utils::Entity entity) noexcept;
 
@@ -390,9 +416,11 @@ public:
      */
     Fence* createFence() noexcept;
 
+    bool destroy(const BufferObject* p);        //!< Destroys a BufferObject object.
     bool destroy(const VertexBuffer* p);        //!< Destroys an VertexBuffer object.
     bool destroy(const Fence* p);               //!< Destroys a Fence object.
     bool destroy(const IndexBuffer* p);         //!< Destroys an IndexBuffer object.
+    bool destroy(const SkinningBuffer* p);      //!< Destroys a SkinningBuffer object.
     bool destroy(const IndirectLight* p);       //!< Destroys an IndirectLight object.
 
     /**
@@ -418,7 +446,7 @@ public:
 
     /**
      * Kicks the hardware thread (e.g. the OpenGL, Vulkan or Metal thread) and blocks until
-     * all commands to this point are executed. Note that this doesn't guarantee that the
+     * all commands to this point are executed. Note that does guarantee that the
      * hardware is actually finished.
      *
      * <p>This is typically used right after destroying the <code>SwapChain</code>,
@@ -427,6 +455,25 @@ public:
      * <code>android.view.SurfaceHolder.Callback.surfaceDestroyed</code></p>
      */
     void flushAndWait();
+
+    /**
+     * Kicks the hardware thread (e.g. the OpenGL, Vulkan or Metal thread) but does not wait
+     * for commands to be either executed or the hardware finished.
+     *
+     * <p>This is typically used after creating a lot of objects to start draining the command
+     * queue which has a limited size.</p>
+      */
+    void flush();
+
+    /**
+     * Drains the user callback message queue and immediately execute all pending callbacks.
+     *
+     * <p> Typically this should be called once per frame right after the application's vsync tick,
+     * and typically just before computing parameters (e.g. object positions) for the next frame.
+     * This is useful because otherwise callbacks will be executed by filament at a later time,
+     * which may increase latency in certain applications.</p>
+     */
+    void pumpMessageQueues();
 
     /**
      * Returns the default Material.
@@ -443,6 +490,32 @@ public:
     Backend getBackend() const noexcept;
 
     /**
+     * Returns the Platform object that belongs to this Engine.
+     *
+     * When Engine::create is called with no platform argument, Filament creates an appropriate
+     * Platform subclass automatically. The specific subclass created depends on the backend and
+     * OS. For example, when the OpenGL backend is used, the Platform object will be a descendant of
+     * OpenGLPlatform.
+     *
+     * dynamic_cast should be used to cast the returned Platform object into a specific subclass.
+     * Note that RTTI must be available to use dynamic_cast.
+     *
+     * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     * Platform* platform = engine->getPlatform();
+     * // static_cast also works, but more dangerous.
+     * SpecificPlatform* specificPlatform = dynamic_cast<SpecificPlatform*>(platform);
+     * specificPlatform->platformSpecificMethod();
+     * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     *
+     * When a custom Platform is passed to Engine::create, Filament will use it instead, and this
+     * method will return it.
+     *
+     * @return A pointer to the Platform object that was provided to Engine::create, or the
+     * Filament-created one.
+     */
+    Platform* getPlatform() const noexcept;
+
+    /**
      * Allocate a small amount of memory directly in the command stream. The allocated memory is
      * guaranteed to be preserved until the current command buffer is executed
      *
@@ -455,36 +528,18 @@ public:
      */
     void* streamAlloc(size_t size, size_t alignment = alignof(double)) noexcept;
 
-
     /**
-     * helper for creating an Entity and Camera component in one call
-     *
-     * @deprecated use createCamera(Entity) instead
-     *
-     * @return A camera component
-     */
-    UTILS_DEPRECATED
-    Camera* createCamera() noexcept;
-
-    /**
-     * helper for destroying the Camera component and its Entity in one call
-     *
-     * @param camera Camera component to destroy. The associated entity is also destroyed.
-     * @deprecated use destroyCameraComponent(Entity) instead
-     */
-    UTILS_DEPRECATED
-    void destroy(const Camera* camera);
-
-   /**
-     * Invokes one iteration of the render loop, used only on single-threaded platforms.
-     *
-     * This should be called every time the windowing system needs to paint (e.g. at 60 Hz).
-     */
+      * Invokes one iteration of the render loop, used only on single-threaded platforms.
+      *
+      * This should be called every time the windowing system needs to paint (e.g. at 60 Hz).
+      */
     void execute();
 
-   /**
-     * Retrieves the job system that the Engine has ownership over.
-     */
+    /**
+      * Retrieves the job system that the Engine has ownership over.
+      *
+      * @return JobSystem used by filament
+      */
     utils::JobSystem& getJobSystem() noexcept;
 
     DebugRegistry& getDebugRegistry() noexcept;

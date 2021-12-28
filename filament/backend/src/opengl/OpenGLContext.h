@@ -22,9 +22,13 @@
 #include <utils/CString.h>
 #include <utils/debug.h>
 
+#include <backend/Handle.h>
+
 #include "GLUtils.h"
 
+#include <array>
 #include <set>
+#include <utility>
 
 namespace filament {
 
@@ -35,11 +39,23 @@ public:
     typedef math::details::TVec4<GLint> vec4gli;
     typedef math::details::TVec2<GLclampf> vec2glf;
 
+    // TODO: the footprint of this structure can be reduced. We need only 1 bit for index type, 16
+    // bits for vertexAttribArray. We can also use fewer bits for vertexBufferVersion, although
+    // this will require a corollary update in OpenGLDriver::setVertexBufferObject().
     struct RenderPrimitive {
         GLuint vao = 0;
         GLenum indicesType = GL_UNSIGNED_INT;
         GLuint elementArray = 0;
         utils::bitset32 vertexAttribArray;
+
+        // The optional 32-bit handle to a GLVertexBuffer is necessary only if the referenced
+        // VertexBuffer supports buffer objects. If this is zero, then the VBO handles array is
+        // immutable.
+        backend::Handle<backend::HwVertexBuffer> vertexBufferWithObjects = {};
+
+        // If this version number does not match vertexBufferWithObjects->bufferObjectsVersion,
+        // then the VAO needs to be updated.
+        uint8_t vertexBufferVersion = 0;
     } gl;
 
     OpenGLContext() noexcept;
@@ -100,11 +116,13 @@ public:
 
     // glGet*() values
     struct {
-        GLint max_renderbuffer_size = 0;
-        GLint max_uniform_block_size = 0;
-        GLint uniform_buffer_offset_alignment = 256;
-        GLfloat maxAnisotropy = 0.0f;
-    } gets;
+        GLfloat max_anisotropy;
+        GLint max_draw_buffers;
+        GLint max_renderbuffer_size;
+        GLint max_samples;
+        GLint max_uniform_block_size;
+        GLint uniform_buffer_offset_alignment;
+    } gets = {};
 
     // features supported by this version of GL or GLES
     struct {
@@ -113,23 +131,28 @@ public:
 
     // supported extensions detected at runtime
     struct {
-        bool texture_compression_s3tc = false;
-        bool texture_compression_etc2 = false;
-        bool texture_filter_anisotropic = false;
-        bool QCOM_tiled_rendering = false;
-        bool OES_EGL_image_external_essl3 = false;
-        bool EXT_debug_marker = false;
-        bool EXT_color_buffer_half_float = false;
-        bool EXT_color_buffer_float = false;
         bool APPLE_color_buffer_packed_float = false;
+        bool ARB_shading_language_packing = false;
+        bool EXT_clip_control = false;
+        bool EXT_color_buffer_float = false;
+        bool EXT_color_buffer_half_float = false;
+        bool EXT_debug_marker = false;
+        bool EXT_disjoint_timer_query = false;
         bool EXT_multisampled_render_to_texture = false;
         bool EXT_multisampled_render_to_texture2 = false;
-        bool KHR_debug = false;
-        bool EXT_texture_sRGB = false;
-        bool EXT_texture_compression_s3tc_srgb = false;
-        bool EXT_disjoint_timer_query = false;
         bool EXT_shader_framebuffer_fetch = false;
-        bool EXT_clip_control = false;
+        bool EXT_texture_compression_etc2 = false;
+        bool EXT_texture_compression_s3tc = false;
+        bool EXT_texture_compression_s3tc_srgb = false;
+        bool EXT_texture_filter_anisotropic = false;
+        bool EXT_texture_sRGB = false;
+        bool GOOGLE_cpp_style_line_directive = false;
+        bool KHR_debug = false;
+        bool OES_EGL_image_external_essl3 = false;
+        bool QCOM_tiled_rendering = false;
+        bool WEBGL_compressed_texture_etc = false;
+        bool WEBGL_compressed_texture_s3tc = false;
+        bool WEBGL_compressed_texture_s3tc_srgb = false;
     } ext;
 
     struct {
@@ -154,7 +177,7 @@ public:
 
         // Some drivers declare GL_EXT_texture_filter_anisotropic but don't support
         // calling glSamplerParameter() with GL_TEXTURE_MAX_ANISOTROPY_EXT
-        bool disable_texture_filter_anisotropic = false;
+        bool texture_filter_anisotropic_broken_on_sampler = false;
 
         // Some drivers have issues when reading from a mip while writing to a different mip.
         // In the OpenGL ES 3.0 specification this is covered in section 4.4.3,
@@ -163,7 +186,55 @@ public:
 
         // Some drivers don't implement timer queries correctly
         bool dont_use_timer_query = false;
+
+        // Some drivers can't blit from a sidecar renderbuffer into a layer of a texture array.
+        // This technique is used for VSM with MSAA turned on.
+        bool disable_sidecar_blit_into_texture_array = false;
+
+        // Some drivers incorrectly flatten the early exit condition in the EASU code, in which
+        // case we need an alternative algorithm
+        bool split_easu = false;
+
+        // As of Android R some qualcomm drivers invalidate buffers for the whole render pass
+        // even if glInvalidateFramebuffer() is called at the end of it.
+        bool invalidate_end_only_if_invalidate_start = false;
     } bugs;
+
+    const std::array<std::tuple<bool const&, char const*, char const*>, sizeof(bugs)> mBugDatabase{{
+            {   bugs.disable_glFlush,
+                    "disable_glFlush",
+                    ""},
+            {   bugs.vao_doesnt_store_element_array_buffer_binding,
+                    "vao_doesnt_store_element_array_buffer_binding",
+                    ""},
+            {   bugs.disable_shared_context_draws,
+                    "disable_shared_context_draws",
+                    ""},
+            {   bugs.texture_external_needs_rebind,
+                    "texture_external_needs_rebind",
+                    ""},
+            {   bugs.disable_invalidate_framebuffer,
+                    "disable_invalidate_framebuffer",
+                    ""},
+            {   bugs.texture_filter_anisotropic_broken_on_sampler,
+                    "texture_filter_anisotropic_broken_on_sampler",
+                    ""},
+            {   bugs.disable_feedback_loops,
+                    "disable_feedback_loops",
+                    ""},
+            {   bugs.dont_use_timer_query,
+                    "dont_use_timer_query",
+                    ""},
+            {   bugs.disable_sidecar_blit_into_texture_array,
+                    "disable_sidecar_blit_into_texture_array",
+                    ""},
+            {   bugs.split_easu,
+                    "split_easu",
+                    ""},
+            {   bugs.invalidate_end_only_if_invalidate_start,
+                    "invalidate_end_only_if_invalidate_start",
+                    ""},
+    }};
 
     // state getters -- as needed.
     GLuint getDrawFbo() const noexcept { return state.draw_fbo; }

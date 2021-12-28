@@ -24,7 +24,7 @@
 #include "common/NioUtils.h"
 #include "common/CallbackUtils.h"
 
-#ifdef ANDROID
+#ifdef __ANDROID__
 
 #if __has_include(<android/hardware_buffer_jni.h>)
 #include <android/hardware_buffer_jni.h>
@@ -102,7 +102,10 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_google_android_filament_Stream_nBuilderStream(JNIEnv*, jclass,
         jlong nativeStreamBuilder, jlong externalTextureId) {
     StreamBuilder* builder = (StreamBuilder*) nativeStreamBuilder;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     builder->builder()->stream(externalTextureId);
+#pragma clang diagnostic pop
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -166,7 +169,8 @@ Java_com_google_android_filament_Stream_nReadPixels(JNIEnv *env, jclass,
 
     PixelBufferDescriptor desc(buffer, sizeInBytes, (backend::PixelDataFormat) format,
             (backend::PixelDataType) type, (uint8_t) alignment, (uint32_t) left, (uint32_t) top,
-            (uint32_t) stride, &JniBufferCallback::invoke, callback);
+            (uint32_t) stride,
+            callback->getHandler(), &JniBufferCallback::postToJavaAndDestroy, callback);
 
     stream->readPixels(uint32_t(xoffset), uint32_t(yoffset), uint32_t(width), uint32_t(height),
             std::move(desc));
@@ -186,7 +190,7 @@ Java_com_google_android_filament_Stream_nSetAcquiredImage(JNIEnv* env, jclass, j
     Engine* engine = (Engine*) nativeEngine;
     Stream* stream = (Stream*) nativeStream;
 
-#ifdef ANDROID
+#ifdef __ANDROID__
 
     // This function is not available before NDK 15 or before Android 8.
     if (UTILS_UNLIKELY(!AHardwareBuffer_fromHardwareBuffer_fn)) {
@@ -218,5 +222,6 @@ Java_com_google_android_filament_Stream_nSetAcquiredImage(JNIEnv* env, jclass, j
 
 #endif
 
-    stream->setAcquiredImage((void*) nativeBuffer, &JniImageCallback::invoke, callback);
+    stream->setAcquiredImage((void*) nativeBuffer,
+            callback->getHandler(), &JniImageCallback::postToJavaAndDestroy, callback);
 }

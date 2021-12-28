@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.19)
 project(bluegl ASM)
 
 set(TARGET              bluegl)
@@ -28,10 +28,6 @@ elseif(LINUX)
     set(SRCS ${SRCS} src/BlueGLCoreLinuxUniversalImpl.S)
 else()
     message(FATAL_ERROR "Platform not supported. BlueGL supports Windows, Linux, and MacOS X.")
-endif()
-
-if (NOT WIN32)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden")
 endif()
 
 # specify where our headers are

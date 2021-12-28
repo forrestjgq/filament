@@ -177,6 +177,9 @@ class Function {
   // debuggers.
   void Dump() const;
 
+  // Returns true is a function declaration and not a function definition.
+  bool IsDeclaration() { return begin() == end(); }
+
  private:
   // The OpFunction instruction that begins the definition of this function.
   std::unique_ptr<Instruction> def_inst_;
@@ -213,6 +216,7 @@ inline void Function::AddBasicBlock(std::unique_ptr<BasicBlock> b) {
 
 inline void Function::AddBasicBlock(std::unique_ptr<BasicBlock> b,
                                     iterator ip) {
+  b->SetParent(this);
   ip.InsertBefore(std::move(b));
 }
 

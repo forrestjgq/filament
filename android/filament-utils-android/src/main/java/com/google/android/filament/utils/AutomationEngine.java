@@ -51,7 +51,7 @@ import com.google.android.filament.Renderer;
  * (shouldClose) that is triggered after the last test has been invoked.
  */
 public class AutomationEngine {
-    private long mNativeObject;
+    private final long mNativeObject;
     private ColorGrading mColorGrading;
 
     /**
@@ -62,18 +62,47 @@ public class AutomationEngine {
          * Minimum time that automation waits between applying a settings object and advancing
          * to the next test case. Specified in seconds.
          */
-        float sleepDuration = 0.2f;
+        public float sleepDuration = 0.2f;
 
         /**
          * Similar to sleepDuration, but expressed as a frame count. Both the minimum sleep time
          * and the minimum frame count must be elapsed before automation advances to the next test.
          */
-        int minFrameCount = 2;
+        public int minFrameCount = 2;
 
         /**
          * If true, test progress is dumped to the utils Log (info priority).
          */
-        boolean verbose = true;
+        public boolean verbose = true;
+    }
+
+    /**
+     * Collection of Filament objects that can be modified by the automation engine.
+     */
+    public static class ViewerContent {
+        public View view;
+        public Renderer renderer;
+        public MaterialInstance[] materials;
+        public LightManager lightManager;
+        public Scene scene;
+        public IndirectLight indirectLight;
+        public @Entity int sunlight;
+        public @Entity int[] assetLights;
+    }
+
+    /**
+     * Allows remote control for the viewer.
+     */
+    public static class ViewerOptions {
+        public float cameraAperture = 16.0f;
+        public float cameraSpeed = 125.0f;
+        public float cameraISO = 100.0f;
+        public float groundShadowStrength = 0.75f;
+        public boolean groundPlaneEnabled = false;
+        public boolean skyboxEnabled = true;
+        public float cameraFocalLength = 28.0f;
+        public float cameraFocusDistance = 0.0f;
+        public boolean autoScaleEnabled = true;
     }
 
     /**
@@ -126,22 +155,22 @@ public class AutomationEngine {
      * This is when settings get applied, screenshots are (optionally) exported, and the internal
      * test counter is potentially incremented.
      *
-     * @param view          The Filament View that automation pushes changes to.
-     * @param materials     Optional set of of materials that can receive parameter tweaks.
-     * @param renderer      The Filament Renderer that can be used to take screenshots.
+     * @param content       Contains the Filament View, Materials, and Renderer that get modified.
      * @param deltaTime     The amount of time that has passed since the previous tick in seconds.
      */
-    public void tick(@NonNull View view, @Nullable MaterialInstance[] materials,
-            @NonNull Renderer renderer, float deltaTime) {
+    public void tick(@NonNull ViewerContent content, float deltaTime) {
+        if (content.view == null || content.renderer == null) {
+            throw new IllegalStateException("Must provide a View and Renderer");
+        }
         long[] nativeMaterialInstances = null;
-        if (materials != null) {
-            nativeMaterialInstances = new long[materials.length];
+        if (content.materials != null) {
+            nativeMaterialInstances = new long[content.materials.length];
             for (int i = 0; i < nativeMaterialInstances.length; i++) {
-                nativeMaterialInstances[i] = materials[i].getNativeObject();
+                nativeMaterialInstances[i] = content.materials[i].getNativeObject();
             }
         }
-        long nativeView = view.getNativeObject();
-        long nativeRenderer = renderer.getNativeObject();
+        long nativeView = content.view.getNativeObject();
+        long nativeRenderer = content.renderer.getNativeObject();
         nTick(mNativeObject, nativeView, nativeMaterialInstances, nativeRenderer, deltaTime);
     }
 
@@ -153,24 +182,44 @@ public class AutomationEngine {
      *
      * This updates the stashed Settings object, then pushes those settings to the given
      * Filament objects. Clients can optionally call getColorGrading() after calling this method.
+     *
+     * @param settingsJson  Contains the JSON string with a set of changes that need to be pushed.
+     * @param content       Contains a set of Filament objects that you want to mutate.
      */
-    public void applySettings(@NonNull String settingsJson, @NonNull View view,
-            @Nullable MaterialInstance[] materials, @Nullable IndirectLight ibl, @Entity int light,
-            @NonNull LightManager lm, @NonNull Scene scene, @NonNull Renderer renderer) {
+    public void applySettings(@NonNull String settingsJson, @NonNull ViewerContent content) {
+        if (content.view == null || content.renderer == null) {
+            throw new IllegalStateException("Must provide a View and Renderer");
+        }
         long[] nativeMaterialInstances = null;
-        if (materials != null) {
-            nativeMaterialInstances = new long[materials.length];
+        if (content.lightManager == null || content.scene == null) {
+            throw new IllegalStateException("Must provide a LightManager and Scene");
+        }
+        if (content.materials != null) {
+            nativeMaterialInstances = new long[content.materials.length];
             for (int i = 0; i < nativeMaterialInstances.length; i++) {
-                nativeMaterialInstances[i] = materials[i].getNativeObject();
+                nativeMaterialInstances[i] = content.materials[i].getNativeObject();
             }
         }
-        long nativeView = view.getNativeObject();
-        long nativeIbl = ibl == null ? 0 : ibl.getNativeObject();
-        long nativeLm = lm.getNativeObject();
-        long nativeScene = scene.getNativeObject();
-        long nativeRenderer = renderer.getNativeObject();
+        long nativeView = content.view.getNativeObject();
+        long nativeIbl = content.indirectLight == null ? 0 : content.indirectLight.getNativeObject();
+        long nativeLm = content.lightManager.getNativeObject();
+        long nativeScene = content.scene.getNativeObject();
+        long nativeRenderer = content.renderer.getNativeObject();
         nApplySettings(mNativeObject, settingsJson, nativeView, nativeMaterialInstances,
-                nativeIbl, light, nativeLm, nativeScene, nativeRenderer);
+                nativeIbl, content.sunlight, content.assetLights, nativeLm, nativeScene,
+                nativeRenderer);
+    }
+
+    /**
+     * Gets the current viewer options.
+     *
+     * NOTE: Focal length here might be different from the user-specified value, due to DoF options.
+     */
+    @NonNull
+    public ViewerOptions getViewerOptions() {
+        ViewerOptions result = new ViewerOptions();
+        nGetViewerOptions(mNativeObject, result);
+        return result;
     }
 
     /**
@@ -179,6 +228,7 @@ public class AutomationEngine {
      * This method either returns a cached instance, or it destroys the cached instance and creates
      * a new one.
      */
+    @NonNull
     public ColorGrading getColorGrading(@NonNull Engine engine) {
         // The native layer automatically destroys the old color grading instance,
         // so there is no need to call Engine#destroyColorGrading here.
@@ -219,7 +269,9 @@ public class AutomationEngine {
     private static native void nTick(long nativeObject, long view, long[] materials, long renderer,
             float deltaTime);
     private static native void nApplySettings(long nativeObject, String jsonSettings, long view,
-            long[] materials, long ibl, int light, long lightManager, long scene, long renderer);
+            long[] materials, long ibl, int sunlight, int[] assetLights, long lightManager,
+            long scene, long renderer);
+    private static native void nGetViewerOptions(long nativeObject, Object result);
     private static native long nGetColorGrading(long nativeObject, long nativeEngine);
     private static native void nSignalBatchMode(long nativeObject);
     private static native void nStopRunning(long nativeObject);

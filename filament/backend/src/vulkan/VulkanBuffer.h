@@ -26,18 +26,17 @@ namespace backend {
 // Encapsulates a Vulkan buffer, its attached DeviceMemory and a staging area.
 class VulkanBuffer {
 public:
-    VulkanBuffer(VulkanContext& context, VulkanStagePool& stagePool, VulkanDisposer& disposer,
-            VulkanDisposer::Key mDisposerKey, VkBufferUsageFlags usage, uint32_t numBytes);
+    VulkanBuffer(VulkanContext& context, VulkanStagePool& stagePool, VkBufferUsageFlags usage,
+            uint32_t numBytes);
     ~VulkanBuffer();
-    void loadFromCpu(const void* cpuData, uint32_t byteOffset, uint32_t numBytes);
+    void terminate(VulkanContext& context);
+    void loadFromCpu(VulkanContext& context, VulkanStagePool& stagePool,
+            const void* cpuData, uint32_t byteOffset, uint32_t numBytes) const;
     VkBuffer getGpuBuffer() const { return mGpuBuffer; }
 private:
-    VulkanContext& mContext;
-    VulkanStagePool& mStagePool;
-    VulkanDisposer& mDisposer;
-    VulkanDisposer::Key mDisposerKey;
     VmaAllocation mGpuMemory = VK_NULL_HANDLE;
     VkBuffer mGpuBuffer = VK_NULL_HANDLE;
+    VkBufferUsageFlags mUsage = {};
 };
 
 } // namespace filament

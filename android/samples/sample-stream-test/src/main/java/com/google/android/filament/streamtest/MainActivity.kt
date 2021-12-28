@@ -18,6 +18,7 @@ package com.google.android.filament.streamtest
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import android.view.Choreographer
 import android.view.Surface
@@ -33,7 +34,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.Channels
 import android.opengl.*
+import android.os.Build
 import android.view.MotionEvent
+import androidx.annotation.RequiresApi
 import com.google.android.filament.android.DisplayHelper
 
 
@@ -78,6 +81,13 @@ class MainActivity : Activity(), ActivityCompat.OnRequestPermissionsResultCallba
 
     private var externalTextureID: Int = 0
 
+    @RequiresApi(30)
+    class Api30Impl {
+        companion object {
+            fun getDisplay(context: Context) = context.display!!
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -94,7 +104,15 @@ class MainActivity : Activity(), ActivityCompat.OnRequestPermissionsResultCallba
         setupScene()
 
         externalTextureID = createExternalTexture()
-        streamHelper = StreamHelper(engine, materialInstance, windowManager.defaultDisplay, externalTextureID)
+
+        @Suppress("deprecation")
+        val display = if (Build.VERSION.SDK_INT >= 30) {
+            Api30Impl.getDisplay(this)
+        } else {
+            windowManager.defaultDisplay!!
+        }
+
+        streamHelper = StreamHelper(engine, materialInstance, display, externalTextureID)
         this.title = streamHelper.getTestName()
     }
 
@@ -121,7 +139,7 @@ class MainActivity : Activity(), ActivityCompat.OnRequestPermissionsResultCallba
         renderer = engine.createRenderer()
         scene = engine.createScene()
         view = engine.createView()
-        camera = engine.createCamera()
+        camera = engine.createCamera(engine.entityManager.create())
     }
 
     private fun setupView() {
@@ -328,13 +346,14 @@ class MainActivity : Activity(), ActivityCompat.OnRequestPermissionsResultCallba
         engine.destroyMaterial(material)
         engine.destroyView(view)
         engine.destroyScene(scene)
-        engine.destroyCamera(camera)
+        engine.destroyCameraComponent(camera.entity)
 
         // Engine.destroyEntity() destroys Filament related resources only
         // (components), not the entity itself
         val entityManager = EntityManager.get()
         entityManager.destroy(light)
         entityManager.destroy(renderable)
+        entityManager.destroy(camera.entity)
 
         // Destroying the engine will free up any resource you may have forgotten
         // to destroy, but it's recommended to do the cleanup properly

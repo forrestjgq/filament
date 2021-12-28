@@ -71,13 +71,12 @@ import static com.google.android.filament.Texture.Type.COMPRESSED;
  * @see MaterialInstance#setParameter(String, Texture, TextureSampler)
  */
 public class Texture {
+    private static final Sampler[] sSamplerValues = Sampler.values();
+    private static final InternalFormat[] sInternalFormatValues = InternalFormat.values();
+
     private long mNativeObject;
 
-    Texture(long nativeTexture) {
-        mNativeObject = nativeTexture;
-    }
-
-    public Texture(Engine engine, long nativeTexture) {
+    public Texture(long nativeTexture) {
         mNativeObject = nativeTexture;
     }
 
@@ -220,7 +219,38 @@ public class Texture {
         ETC2_EAC_RGBA8, ETC2_EAC_SRGBA8,
 
         // Available everywhere except Android/iOS
-        DXT1_RGB, DXT1_RGBA, DXT3_RGBA, DXT5_RGBA
+        DXT1_RGB, DXT1_RGBA, DXT3_RGBA, DXT5_RGBA,
+        DXT1_SRGB, DXT1_SRGBA, DXT3_SRGBA, DXT5_SRGBA,
+
+        // ASTC formats are available with a GLES extension
+        RGBA_ASTC_4x4,
+        RGBA_ASTC_5x4,
+        RGBA_ASTC_5x5,
+        RGBA_ASTC_6x5,
+        RGBA_ASTC_6x6,
+        RGBA_ASTC_8x5,
+        RGBA_ASTC_8x6,
+        RGBA_ASTC_8x8,
+        RGBA_ASTC_10x5,
+        RGBA_ASTC_10x6,
+        RGBA_ASTC_10x8,
+        RGBA_ASTC_10x10,
+        RGBA_ASTC_12x10,
+        RGBA_ASTC_12x12,
+        SRGB8_ALPHA8_ASTC_4x4,
+        SRGB8_ALPHA8_ASTC_5x4,
+        SRGB8_ALPHA8_ASTC_5x5,
+        SRGB8_ALPHA8_ASTC_6x5,
+        SRGB8_ALPHA8_ASTC_6x6,
+        SRGB8_ALPHA8_ASTC_8x5,
+        SRGB8_ALPHA8_ASTC_8x6,
+        SRGB8_ALPHA8_ASTC_8x8,
+        SRGB8_ALPHA8_ASTC_10x5,
+        SRGB8_ALPHA8_ASTC_10x6,
+        SRGB8_ALPHA8_ASTC_10x8,
+        SRGB8_ALPHA8_ASTC_10x10,
+        SRGB8_ALPHA8_ASTC_12x10,
+        SRGB8_ALPHA8_ASTC_12x12
     }
 
     /**
@@ -235,7 +265,38 @@ public class Texture {
         ETC2_EAC_RGBA8, ETC2_EAC_SRGBA8,
 
         // Available everywhere except Android/iOS
-        DXT1_RGB, DXT1_RGBA, DXT3_RGBA, DXT5_RGBA
+        DXT1_RGB, DXT1_RGBA, DXT3_RGBA, DXT5_RGBA,
+        DXT1_SRGB, DXT1_SRGBA, DXT3_SRGBA, DXT5_SRGBA,
+
+        // ASTC formats are available with a GLES extension
+        RGBA_ASTC_4x4,
+        RGBA_ASTC_5x4,
+        RGBA_ASTC_5x5,
+        RGBA_ASTC_6x5,
+        RGBA_ASTC_6x6,
+        RGBA_ASTC_8x5,
+        RGBA_ASTC_8x6,
+        RGBA_ASTC_8x8,
+        RGBA_ASTC_10x5,
+        RGBA_ASTC_10x6,
+        RGBA_ASTC_10x8,
+        RGBA_ASTC_10x10,
+        RGBA_ASTC_12x10,
+        RGBA_ASTC_12x12,
+        SRGB8_ALPHA8_ASTC_4x4,
+        SRGB8_ALPHA8_ASTC_5x4,
+        SRGB8_ALPHA8_ASTC_5x5,
+        SRGB8_ALPHA8_ASTC_6x5,
+        SRGB8_ALPHA8_ASTC_6x6,
+        SRGB8_ALPHA8_ASTC_8x5,
+        SRGB8_ALPHA8_ASTC_8x6,
+        SRGB8_ALPHA8_ASTC_8x8,
+        SRGB8_ALPHA8_ASTC_10x5,
+        SRGB8_ALPHA8_ASTC_10x6,
+        SRGB8_ALPHA8_ASTC_10x8,
+        SRGB8_ALPHA8_ASTC_10x10,
+        SRGB8_ALPHA8_ASTC_12x10,
+        SRGB8_ALPHA8_ASTC_12x12
     }
 
     /**
@@ -509,12 +570,15 @@ public class Texture {
                 case RGBA_INTEGER:
                     n = 4;
                     break;
+
+                default: throw new IllegalStateException("unsupported format enum");
             }
 
             int bpp = n;
             switch (type) {
                 case UBYTE:
                 case BYTE:
+                case COMPRESSED:
                     // nothing to do
                     break;
                 case USHORT:
@@ -530,6 +594,9 @@ public class Texture {
                 case UINT_10F_11F_11F_REV:
                     // Special case, format must be RGB and uses 4 bytes
                     bpp = 4;
+                    break;
+                case USHORT_565:
+                    bpp = 2;
                     break;
             }
 
@@ -560,6 +627,17 @@ public class Texture {
     public static boolean isTextureFormatSupported(@NonNull Engine engine,
             @NonNull InternalFormat format) {
         return nIsTextureFormatSupported(engine.getNativeObject(), format.ordinal());
+    }
+
+    /**
+     * Checks whether texture swizzling is supported in this {@link Engine}.
+     * This depends on the selected backend.
+     *
+     * @param engine {@link Engine}
+     * @return <code>true</code> if texture swizzling.
+     */
+    public static boolean isTextureSwizzleSupported(@NonNull Engine engine) {
+        return nIsTextureSwizzleSupported(engine.getNativeObject());
     }
 
     /**
@@ -679,6 +757,26 @@ public class Texture {
         }
 
         /**
+         * Specify a native texture to import as a Filament texture.
+         * <p>
+         * The texture id is backend-specific:
+         * <ul>
+         *   <li> OpenGL: GLuint texture ID </li>
+         * </ul>
+         * </p>
+         *
+         *
+         * @param id a backend specific texture identifier
+         *
+         * @return This Builder, for chaining calls.
+         */
+        @NonNull
+        public Builder importTexture(long id) {
+            nBuilderImportTexture(mNativeBuilder, id);
+            return this;
+        }
+
+        /**
          * Creates a new <code>Texture</code> instance.
          * @param engine The {@link Engine} to associate this <code>Texture</code> with.
          * @return A newly created <code>Texture</code>
@@ -772,7 +870,7 @@ public class Texture {
      */
     @NonNull
     public Sampler getTarget() {
-        return Sampler.values()[nGetTarget(getNativeObject())];
+        return sSamplerValues[nGetTarget(getNativeObject())];
     }
 
     /**
@@ -780,7 +878,7 @@ public class Texture {
      */
     @NonNull
     public InternalFormat getFormat() {
-        return InternalFormat.values()[nGetInternalFormat(getNativeObject())];
+        return sInternalFormatValues[nGetInternalFormat(getNativeObject())];
     }
 
     // TODO: add a setImage() version that takes an android Bitmap
@@ -882,7 +980,7 @@ public class Texture {
      * @param level     Level to set the image for. Must be less than {@link #getLevels()}.
      * @param xoffset   x-offset in texel of the region to modify
      * @param yoffset   y-offset in texel of the region to modify
-     * @param yoffset   z-offset in texel of the region to modify
+     * @param zoffset   z-offset in texel of the region to modify
      * @param width     width in texel of the region to modify
      * @param height    height in texel of the region to modify
      * @param depth     depth in texel or index of the region to modify
@@ -1137,6 +1235,7 @@ public class Texture {
     }
 
     private static native boolean nIsTextureFormatSupported(long nativeEngine, int internalFormat);
+    private static native boolean nIsTextureSwizzleSupported(long nativeEngine);
 
     private static native long nCreateBuilder();
     private static native void nDestroyBuilder(long nativeBuilder);
@@ -1149,6 +1248,7 @@ public class Texture {
     private static native void nBuilderFormat(long nativeBuilder, int format);
     private static native void nBuilderUsage(long nativeBuilder, int flags);
     private static native void nBuilderSwizzle(long nativeBuilder, int r, int g, int b, int a);
+    private static native void nBuilderImportTexture(long nativeBuilder, long id);
     private static native long nBuilderBuild(long nativeBuilder, long nativeEngine);
 
     private static native int nGetWidth(long nativeTexture, int level);

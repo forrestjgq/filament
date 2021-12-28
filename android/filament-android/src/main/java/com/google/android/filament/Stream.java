@@ -91,6 +91,8 @@ import java.nio.ReadOnlyBufferException;
  * @see Engine#destroyStream
  */
 public class Stream {
+    private static final StreamType[] sStreamTypeValues = StreamType.values();
+
     private long mNativeObject;
     private long mNativeEngine;
 
@@ -166,7 +168,9 @@ public class Stream {
          *                          <code>GL_TEXTURE_EXTERNAL_OES.</code>
          * @return This Builder, for chaining calls.
          * @see Texture#setExternalStream
+         * @deprecated this method existed only for ARCore which doesn't need this anymore, use {@link Texture.Builder#importTexture(long)} instead.
          */
+        @Deprecated
         @NonNull
         public Builder stream(long externalTextureId) {
             nBuilderStream(mNativeBuilder, externalTextureId);
@@ -234,7 +238,7 @@ public class Stream {
      * Indicates whether this <code>Stream</code> is NATIVE, TEXTURE_ID, or ACQUIRED.
      */
     public StreamType getStreamType() {
-        return StreamType.values()[nGetStreamType(getNativeObject())];
+        return sStreamTypeValues[nGetStreamType(getNativeObject())];
     }
 
     /**

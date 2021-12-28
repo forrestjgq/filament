@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef TNT_FILAMENT_DRIVER_UNIFORMBUFFER_H
-#define TNT_FILAMENT_DRIVER_UNIFORMBUFFER_H
+#ifndef TNT_FILAMENT_UNIFORMBUFFER_H
+#define TNT_FILAMENT_UNIFORMBUFFER_H
 
 #include <algorithm>
 
@@ -200,9 +200,6 @@ private:
 
     inline bool isLocalStorage() const noexcept { return mBuffer == mStorage; }
 
-    // TODO: we need a better way to calculate this local storage.
-    // Probably the better thing to do would be to use a special allocator.
-    // Local storage is limited by the total size of a handle (128 byte for GL)
     char mStorage[96];
     void *mBuffer = nullptr;
     uint32_t mSize = 0;
@@ -232,4 +229,4 @@ inline math::mat3f UniformBuffer::getUniform(size_t offset) const noexcept {
 
 } // namespace filament
 
-#endif // TNT_FILAMENT_DRIVER_UNIFORMBUFFER_H
+#endif // TNT_FILAMENT_UNIFORMBUFFER_H

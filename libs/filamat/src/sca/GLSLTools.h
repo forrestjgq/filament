@@ -124,7 +124,7 @@ public:
     bool analyzeFragmentShader(const std::string& shaderCode,
             filament::backend::ShaderModel model,
             MaterialBuilder::MaterialDomain materialDomain,
-            MaterialBuilder::TargetApi targetApi) const noexcept;
+            MaterialBuilder::TargetApi targetApi, bool hasCustomSurfaceShading) const noexcept;
 
     bool analyzeVertexShader(const std::string& shaderCode,
             filament::backend::ShaderModel model,
@@ -149,6 +149,8 @@ public:
 
     static void prepareShaderParser(MaterialBuilder::TargetApi targetApi, glslang::TShader& shader,
             EShLanguage language, int version, MaterialBuilder::Optimization optimization);
+
+    static void textureLodBias(glslang::TShader& shader);
 
 private:
 

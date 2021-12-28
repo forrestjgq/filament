@@ -7,14 +7,14 @@ vec4 getColor() {
 
 #if defined(HAS_ATTRIBUTE_UV0)
 /** @public-api */
-vec2 getUV0() {
+highp vec2 getUV0() {
     return vertex_uv01.xy;
 }
 #endif
 
 #if defined(HAS_ATTRIBUTE_UV1)
 /** @public-api */
-vec2 getUV1() {
+highp vec2 getUV1() {
     return vertex_uv01.zw;
 }
 #endif
@@ -81,19 +81,6 @@ highp vec2 uvToRenderTargetUV(highp vec2 uv) {
     return uv;
 }
 
-#if defined(HAS_SHADOWING) && defined(HAS_DIRECTIONAL_LIGHTING)
-highp vec3 getLightSpacePosition() {
-#if defined(HAS_VSM)
-    // For VSM, do not project the Z coordinate. It remains as linear Z in light space.
-    // See the computeVsmLightSpaceMatrix comments in ShadowMap.cpp.
-    return vec3(vertex_lightSpacePosition.xy * (1.0 / vertex_lightSpacePosition.w),
-            vertex_lightSpacePosition.z);
-#else
-    return vertex_lightSpacePosition.xyz * (1.0 / vertex_lightSpacePosition.w);
-#endif
-}
-#endif
-
 /**
  * Returns the normalized [0, 1] viewport coordinates with the origin at the viewport's bottom-left.
  * Z coordinate is in the [0, 1] range as well.
@@ -101,20 +88,26 @@ highp vec3 getLightSpacePosition() {
  * @public-api
  */
 highp vec3 getNormalizedViewportCoord() {
-    // make sure handle our reversed-z
+    // make sure to handle our reversed-z
     return vec3(shading_normalizedViewportCoord, 1.0 - gl_FragCoord.z);
 }
 
+// This new version doesn't invert Z.
+// TODO: Should we make it public?
+highp vec3 getNormalizedViewportCoord2() {
+    return vec3(shading_normalizedViewportCoord, gl_FragCoord.z);
+}
+
 #if defined(HAS_SHADOWING) && defined(HAS_DYNAMIC_LIGHTING)
-highp vec3 getSpotLightSpacePosition(uint index) {
-    highp vec4 position = vertex_spotLightSpacePosition[index];
-#if defined(HAS_VSM)
-    // For VSM, do not project the Z coordinate. It remains as linear Z in light space.
-    // See the computeVsmLightSpaceMatrix comments in ShadowMap.cpp.
-    return vec3(position.xy * (1.0 / position.w), position.z);
-#else
-    return position.xyz * (1.0 / position.w);
-#endif
+highp vec4 getSpotLightSpacePosition(uint index, highp float zLight) {
+    highp mat4 lightFromWorldMatrix = shadowUniforms.shadows[index].lightFromWorldMatrix;
+    highp vec3 dir = shadowUniforms.shadows[index].direction;
+
+    // for spotlights, the bias depends on z
+    float bias = shadowUniforms.shadows[index].normalBias * zLight;
+
+    return computeLightSpacePosition(getWorldPosition(),
+            vertex_worldNormal, dir, bias, lightFromWorldMatrix);
 }
 #endif
 
@@ -136,24 +129,18 @@ uint getShadowCascade() {
 
 #if defined(HAS_SHADOWING) && defined(HAS_DIRECTIONAL_LIGHTING)
 
-highp vec3 getCascadeLightSpacePosition(uint cascade) {
+highp vec4 getCascadeLightSpacePosition(uint cascade) {
     // For the first cascade, return the interpolated light space position.
     // This branch will be coherent (mostly) for neighboring fragments, and it's worth avoiding
     // the matrix multiply inside computeLightSpacePosition.
     if (cascade == 0u) {
-        return getLightSpacePosition();
+        // Note: this branch may cause issues with derivatives
+        return vertex_lightSpacePosition;
     }
 
-    highp vec4 pos = computeLightSpacePosition(getWorldPosition(), getWorldNormalVector(),
-        frameUniforms.lightDirection, frameUniforms.shadowBias.y,
+    return computeLightSpacePosition(getWorldPosition(), getWorldNormalVector(),
+        frameUniforms.lightDirection, frameUniforms.shadowBias,
         frameUniforms.lightFromWorldMatrix[cascade]);
-#if defined(HAS_VSM)
-    // For VSM, do not project the Z coordinate. It remains as linear Z in light space.
-    // See the computeVsmLightSpaceMatrix comments in ShadowMap.cpp.
-    return vec3(pos.xy * (1.0 / pos.w), pos.z);
-#else
-    return pos.xyz * (1.0 / pos.w);
-#endif
 }
 
 #endif

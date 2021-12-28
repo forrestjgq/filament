@@ -20,6 +20,7 @@
 #include <filament/Box.h>
 #include <filament/TextureSampler.h>
 
+#include <utils/compiler.h>
 #include <utils/Entity.h>
 
 namespace filament {
@@ -52,7 +53,7 @@ class FilamentInstance;
  *
  * \todo Only the default glTF scene is loaded, other glTF scenes are ignored.
  */
-class FilamentAsset {
+class UTILS_PUBLIC FilamentAsset {
 public:
 
     /**
@@ -188,6 +189,9 @@ public:
      */
     size_t getEntitiesByPrefix(const char* prefix, utils::Entity* entities,
             size_t maxCount) const noexcept;
+
+    /** Gets the glTF extras string for a specific node, or for the asset, if it exists. */
+    const char* getExtras(utils::Entity entity = {}) const noexcept;
 
     /**
      * Lazily creates the animation engine or returns it from the cache.

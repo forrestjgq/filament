@@ -37,9 +37,11 @@ class FMaterial;
 
 class FMaterialInstance : public MaterialInstance {
 public:
-    FMaterialInstance(FEngine& engine, FMaterial const* material, const char* name);
+    FMaterialInstance(FEngine& engine, FMaterialInstance const* other, const char* name);
     FMaterialInstance(const FMaterialInstance& rhs) = delete;
     FMaterialInstance& operator=(const FMaterialInstance& rhs) = delete;
+
+    static FMaterialInstance* duplicate(FMaterialInstance const* other, const char* name) noexcept;
 
     ~FMaterialInstance() noexcept;
 
@@ -89,6 +91,8 @@ public:
 
     bool getDepthWrite() const noexcept { return mDepthWrite; }
 
+    TransparencyMode getTransparencyMode() const noexcept { return mTransparencyMode; }
+
     backend::RasterState::DepthFunc getDepthFunc() const noexcept { return mDepthFunc; }
 
     void setPolygonOffset(float scale, float constant) noexcept {
@@ -105,6 +109,8 @@ public:
     void setSpecularAntiAliasingThreshold(float threshold) noexcept;
 
     void setDoubleSided(bool doubleSided) noexcept;
+
+    void setTransparencyMode(TransparencyMode mode) noexcept;
 
     void setCullingMode(CullingMode culling) noexcept { mCulling = culling; }
 
@@ -142,13 +148,12 @@ private:
 
     FMaterialInstance() noexcept;
     void initDefaultInstance(FEngine& engine, FMaterial const* material);
-    void initialize(FMaterial const* material);
 
     void commitSlow(FEngine::DriverApi& driver) const;
 
     // keep these grouped, they're accessed together in the render-loop
     FMaterial const* mMaterial = nullptr;
-    backend::Handle<backend::HwUniformBuffer> mUbHandle;
+    backend::Handle<backend::HwBufferObject> mUbHandle;
     backend::Handle<backend::HwSamplerGroup> mSbHandle;
 
     UniformBuffer mUniforms;
@@ -158,6 +163,7 @@ private:
     bool mColorWrite;
     bool mDepthWrite;
     backend::RasterState::DepthFunc mDepthFunc;
+    TransparencyMode mTransparencyMode;
 
     uint64_t mMaterialSortingKey = 0;
 

@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-#include "gtest/gtest.h"
+#include "gmock/gmock.h"
 #include "source/opt/build_module.h"
 #include "source/opt/def_use_manager.h"
 #include "source/opt/ir_context.h"
@@ -28,6 +28,8 @@
 namespace spvtools {
 namespace opt {
 namespace {
+
+using ::testing::ContainerEq;
 
 constexpr uint32_t kOpLineOperandLineIndex = 1;
 
@@ -103,6 +105,22 @@ TEST(IrBuilder, RoundTripIncompleteFunction) {
   DoRoundTripCheck("%2 = OpFunction %1 None %3\n");
 }
 
+TEST(IrBuilder, RoundTripFunctionPointer) {
+  DoRoundTripCheck(
+      "OpCapability Linkage\n"
+      "OpCapability FunctionPointersINTEL\n"
+      "OpName %some_function \"some_function\"\n"
+      "OpName %ptr_to_function \"ptr_to_function\"\n"
+      "OpDecorate %some_function LinkageAttributes \"some_function\" Import\n"
+      "%float = OpTypeFloat 32\n"
+      "%4 = OpTypeFunction %float %float\n"
+      "%_ptr_Function_4 = OpTypePointer Function %4\n"
+      "%ptr_to_function = OpConstantFunctionPointerINTEL %_ptr_Function_4 "
+      "%some_function\n"
+      "%some_function = OpFunction %float Const %4\n"
+      "%6 = OpFunctionParameter %float\n"
+      "OpFunctionEnd\n");
+}
 TEST(IrBuilder, KeepLineDebugInfo) {
   // #version 310 es
   // void main() {}
@@ -234,6 +252,100 @@ TEST(IrBuilder, DistributeLineDebugInfo) {
                 check.line_numbers[i]);
     }
   }
+}
+
+TEST(IrBuilder, BuildModule_WithoutExtraLines) {
+  const std::string text = R"(OpCapability Shader
+OpMemoryModel Logical Simple
+OpEntryPoint Vertex %main "main"
+%file = OpString "my file"
+%void = OpTypeVoid
+%voidfn = OpTypeFunction %void
+%float = OpTypeFloat 32
+%float_1 = OpConstant %float 1
+%main = OpFunction %void None %voidfn
+%100 = OpLabel
+%1 = OpFAdd %float %float_1 %float_1
+OpLine %file 1 0
+%2 = OpFMul %float %1 %1
+%3 = OpFSub %float %2 %2
+OpReturn
+OpFunctionEnd
+)";
+
+  std::vector<uint32_t> binary;
+  SpirvTools t(SPV_ENV_UNIVERSAL_1_1);
+  ASSERT_TRUE(t.Assemble(text, &binary,
+                         SPV_TEXT_TO_BINARY_OPTION_PRESERVE_NUMERIC_IDS));
+
+  // This is the function we're testing.
+  std::unique_ptr<IRContext> context = BuildModule(
+      SPV_ENV_UNIVERSAL_1_5, nullptr, binary.data(), binary.size(), false);
+  ASSERT_NE(nullptr, context);
+
+  spvtools::opt::analysis::DefUseManager* def_use_mgr =
+      context->get_def_use_mgr();
+
+  std::vector<SpvOp> opcodes;
+  for (auto* inst = def_use_mgr->GetDef(1);
+       inst && (inst->opcode() != SpvOpFunctionEnd); inst = inst->NextNode()) {
+    inst->ForEachInst(
+        [&opcodes](spvtools::opt::Instruction* sub_inst) {
+          opcodes.push_back(sub_inst->opcode());
+        },
+        true);
+  }
+
+  EXPECT_THAT(opcodes,
+              ContainerEq(std::vector<SpvOp>{SpvOpFAdd, SpvOpLine, SpvOpFMul,
+                                             SpvOpFSub, SpvOpReturn}));
+}
+
+TEST(IrBuilder, BuildModule_WithExtraLines_IsDefault) {
+  const std::string text = R"(OpCapability Shader
+OpMemoryModel Logical Simple
+OpEntryPoint Vertex %main "main"
+%file = OpString "my file"
+%void = OpTypeVoid
+%voidfn = OpTypeFunction %void
+%float = OpTypeFloat 32
+%float_1 = OpConstant %float 1
+%main = OpFunction %void None %voidfn
+%100 = OpLabel
+%1 = OpFAdd %float %float_1 %float_1
+OpLine %file 1 0
+%2 = OpFMul %float %1 %1
+%3 = OpFSub %float %2 %2
+OpReturn
+OpFunctionEnd
+)";
+
+  std::vector<uint32_t> binary;
+
+  SpirvTools t(SPV_ENV_UNIVERSAL_1_1);
+  ASSERT_TRUE(t.Assemble(text, &binary,
+                         SPV_TEXT_TO_BINARY_OPTION_PRESERVE_NUMERIC_IDS));
+
+  // This is the function we're testing.
+  std::unique_ptr<IRContext> context =
+      BuildModule(SPV_ENV_UNIVERSAL_1_5, nullptr, binary.data(), binary.size());
+
+  spvtools::opt::analysis::DefUseManager* def_use_mgr =
+      context->get_def_use_mgr();
+
+  std::vector<SpvOp> opcodes;
+  for (auto* inst = def_use_mgr->GetDef(1);
+       inst && (inst->opcode() != SpvOpFunctionEnd); inst = inst->NextNode()) {
+    inst->ForEachInst(
+        [&opcodes](spvtools::opt::Instruction* sub_inst) {
+          opcodes.push_back(sub_inst->opcode());
+        },
+        true);
+  }
+
+  EXPECT_THAT(opcodes, ContainerEq(std::vector<SpvOp>{
+                           SpvOpFAdd, SpvOpLine, SpvOpFMul, SpvOpLine,
+                           SpvOpFSub, SpvOpLine, SpvOpReturn}));
 }
 
 TEST(IrBuilder, ConsumeDebugInfoInst) {

@@ -235,6 +235,7 @@ INSTANTIATE_TEST_SUITE_P(
         {"hlsl.groupid.comp", "main"},
         {"hlsl.identifier.sample.frag", "main"},
         {"hlsl.if.frag", "PixelShaderFunction"},
+        {"hlsl.imageload-subvec4.comp", "main"},
         {"hlsl.imagefetch-subvec4.comp", "main"},
         {"hlsl.implicitBool.frag", "main"},
         {"hlsl.inf.vert", "main"},
@@ -245,7 +246,6 @@ INSTANTIATE_TEST_SUITE_P(
         {"hlsl.isfinite.frag", "main"},
         {"hlsl.intrinsics.barriers.comp", "ComputeShaderFunction"},
         {"hlsl.intrinsics.comp", "ComputeShaderFunction"},
-        {"hlsl.intrinsics.evalfns.frag", "main"},
         {"hlsl.intrinsics.d3dcolortoubyte4.frag", "main"},
         {"hlsl.intrinsics.double.frag", "PixelShaderFunction"},
         {"hlsl.intrinsics.f1632.frag", "main"},
@@ -313,6 +313,7 @@ INSTANTIATE_TEST_SUITE_P(
         {"hlsl.promote.binary.frag", "main"},
         {"hlsl.promote.vec1.frag", "main"},
         {"hlsl.promotions.frag", "main"},
+        {"hlsl.round.dx10.frag", "main"},
         {"hlsl.rw.atomics.frag", "main"},
         {"hlsl.rw.bracket.frag", "main"},
         {"hlsl.rw.register.frag", "main"},
@@ -470,6 +471,7 @@ INSTANTIATE_TEST_SUITE_P(
         {"hlsl.flattenOpaqueInitMix.vert", "main"},
         {"hlsl.flattenSubset.frag", "main"},
         {"hlsl.flattenSubset2.frag", "main"},
+        {"hlsl.intrinsics.evalfns.frag", "main"},
         {"hlsl.partialFlattenLocal.vert", "main"},
         {"hlsl.partialFlattenMixed.vert", "main"}
     }),
@@ -490,6 +492,7 @@ INSTANTIATE_TEST_SUITE_P(
 INSTANTIATE_TEST_SUITE_P(
     ToSpirv, HlslDX9CompatibleTest,
     ::testing::ValuesIn(std::vector<FileNameEntryPointPair>{
+        {"hlsl.round.dx9.frag", "main"},
         {"hlsl.sample.dx9.frag", "main"},
         {"hlsl.sample.dx9.vert", "main"},
     }),

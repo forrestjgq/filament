@@ -38,7 +38,7 @@ static const bool VERBOSE = false;
 namespace filament {
 namespace viewer {
 
-// The default spec generates 65 test cases.
+// The default spec generates 66 test cases.
 static const char* DEFAULT_AUTOMATION = R"TXT([
     {
         "name": "ppoff",
@@ -47,12 +47,17 @@ static const char* DEFAULT_AUTOMATION = R"TXT([
         }
     },
     {
+        "name": "vieweropts",
+        "base": {
+            "viewer.cameraFocusDistance": 0.1
+        }
+    },
+    {
         "name": "viewopts",
         "base": {
-            "view.dof.focusDistance": 0.1
         },
         "permute": {
-            "view.sampleCount": [1, 4],
+            "view.msaa.enabled": [false, true],
             "view.taa.enabled": [false, true],
             "view.antiAliasing": ["NONE", "FXAA"],
             "view.ssao.enabled": [false, true],

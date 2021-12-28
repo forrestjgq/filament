@@ -14,14 +14,17 @@
  * limitations under the License.
  */
 
-#ifndef TNT_FILAMENT_FG2_PASSNODE_H
-#define TNT_FILAMENT_FG2_PASSNODE_H
+#ifndef TNT_FILAMENT_FG2_DETAILS_PASSNODE_H
+#define TNT_FILAMENT_FG2_DETAILS_PASSNODE_H
 
 #include "fg2/details/DependencyGraph.h"
 #include "fg2/details/Utilities.h"
 #include "fg2/FrameGraph.h"
 #include "fg2/FrameGraphRenderPass.h"
+
 #include "private/backend/DriverApiForward.h"
+
+#include <backend/TargetBufferInfo.h>
 
 #include <unordered_set>
 
@@ -63,13 +66,14 @@ class RenderPassNode : public PassNode {
 public:
     class RenderPassData {
     public:
+        static constexpr size_t ATTACHMENT_COUNT = backend::MRT::MAX_SUPPORTED_RENDER_TARGET_COUNT + 2;
         const char* name = {};
         FrameGraphRenderPass::Descriptor descriptor;
         bool imported = false;
         backend::TargetBufferFlags targetBufferFlags = {};
-        FrameGraphId<FrameGraphTexture> attachmentInfo[6] = {};
-        ResourceNode* incoming[6] = {};  // nodes of the incoming attachments
-        ResourceNode* outgoing[6] = {};  // nodes of the outgoing attachments
+        FrameGraphId<FrameGraphTexture> attachmentInfo[ATTACHMENT_COUNT] = {};
+        ResourceNode* incoming[ATTACHMENT_COUNT] = {};  // nodes of the incoming attachments
+        ResourceNode* outgoing[ATTACHMENT_COUNT] = {};  // nodes of the outgoing attachments
         struct {
             backend::Handle<backend::HwRenderTarget> target;
             backend::RenderPassParams params;
@@ -120,4 +124,4 @@ private:
 
 } // namespace filament
 
-#endif //TNT_FILAMENT_FG2_PASSNODE_H
+#endif // TNT_FILAMENT_FG2_DETAILS_PASSNODE_H

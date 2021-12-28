@@ -17,6 +17,8 @@
 #ifndef TNT_FILAMENT_FG2_FRAMEGRAPH_H
 #define TNT_FILAMENT_FG2_FRAMEGRAPH_H
 
+#include "Allocators.h"
+
 #include "fg2/Blackboard.h"
 #include "fg2/FrameGraphId.h"
 #include "fg2/FrameGraphPass.h"
@@ -26,8 +28,6 @@
 #include "fg2/details/DependencyGraph.h"
 #include "fg2/details/Resource.h"
 #include "fg2/details/Utilities.h"
-
-#include "details/Allocators.h"
 
 #include "private/backend/DriverApiForward.h"
 
@@ -372,9 +372,6 @@ private:
     friend class PassNode;
     friend class ResourceNode;
     friend class RenderPassNode;
-
-    template<typename T> using Allocator = utils::STLAllocator<T, LinearAllocatorArena>;
-    template<typename T> using Vector = std::vector<T, Allocator<T>>; // 32 bytes
 
     LinearAllocatorArena& getArena() noexcept { return mArena; }
     DependencyGraph& getGraph() noexcept { return mGraph; }

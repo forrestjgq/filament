@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-#include "details/Froxelizer.h"
+#include "Froxelizer.h"
 
 #include "Intersections.h"
 
 #include "details/Engine.h"
 #include "details/Scene.h"
+
+#include "private/backend/DriverApi.h"
 
 #include <filament/Viewport.h>
 
@@ -42,13 +44,6 @@ namespace filament {
 
 using namespace backend;
 
-/*
- * This enables froxels to be rectangular which allows us to use a bit more froxel
- * with the same amount of memory in the GPU.
- * Currently not enabled because not enough tested.
- */
-static constexpr bool USE_NON_SQUARE_FROXELS = false;
-
 // The Froxel buffer is set to FROXEL_BUFFER_WIDTH x n
 // With n limited by the supported texture dimension, which is guaranteed to be at least 2048
 // in all version of GLES.
@@ -59,11 +54,10 @@ constexpr size_t FROXEL_BUFFER_WIDTH        = 1u << FROXEL_BUFFER_WIDTH_SHIFT;
 constexpr size_t FROXEL_BUFFER_WIDTH_MASK   = FROXEL_BUFFER_WIDTH - 1u;
 constexpr size_t FROXEL_BUFFER_HEIGHT       = (FROXEL_BUFFER_ENTRY_COUNT_MAX + FROXEL_BUFFER_WIDTH_MASK) / FROXEL_BUFFER_WIDTH;
 
-constexpr size_t RECORD_BUFFER_WIDTH_SHIFT  = 5u;
+constexpr size_t RECORD_BUFFER_WIDTH_SHIFT  = 4u;
 constexpr size_t RECORD_BUFFER_WIDTH        = 1u << RECORD_BUFFER_WIDTH_SHIFT;
-
-constexpr size_t RECORD_BUFFER_HEIGHT       = 2048;
-constexpr size_t RECORD_BUFFER_ENTRY_COUNT  = RECORD_BUFFER_WIDTH * RECORD_BUFFER_HEIGHT; // 64K
+constexpr size_t RECORD_BUFFER_HEIGHT       = 1024;
+constexpr size_t RECORD_BUFFER_ENTRY_COUNT  = RECORD_BUFFER_WIDTH * RECORD_BUFFER_HEIGHT; // 16K
 
 // Buffer needed for Froxelizer internal data structures (~256 KiB)
 constexpr size_t PER_FROXELDATA_ARENA_SIZE = sizeof(float4) *
@@ -90,12 +84,16 @@ Froxelizer::Froxelizer(FEngine& engine)
 
     DriverApi& driverApi = engine.getDriverApi();
 
-    // RecordBuffer cannot be larger than 65536 entries, because indices are uint16_t
-    GPUBuffer::ElementType type = std::is_same<RecordBufferType, uint8_t>::value
-                                  ? GPUBuffer::ElementType::UINT8 : GPUBuffer::ElementType::UINT16;
-    mRecordsBuffer = GPUBuffer(driverApi, { type, 1 }, RECORD_BUFFER_WIDTH, RECORD_BUFFER_HEIGHT);
-    mFroxelBuffer  = GPUBuffer(driverApi, { GPUBuffer::ElementType::UINT16, 2 },
-            FROXEL_BUFFER_WIDTH, FROXEL_BUFFER_HEIGHT);
+    static_assert(std::is_same_v<RecordBufferType, uint8_t>,
+            "Record Buffer must use bytes");
+
+    mRecordsBuffer = driverApi.createBufferObject(RECORD_BUFFER_ENTRY_COUNT,
+            BufferObjectBinding::UNIFORM, BufferUsage::DYNAMIC);
+
+    mFroxelTexture = driverApi.createTexture(SamplerType::SAMPLER_2D, 1,
+            backend::TextureFormat::RG16UI, 1,
+            FROXEL_BUFFER_WIDTH, FROXEL_BUFFER_HEIGHT, 1,
+            TextureUsage::SAMPLEABLE | TextureUsage::UPLOADABLE);
 }
 
 Froxelizer::~Froxelizer() {
@@ -111,8 +109,8 @@ void Froxelizer::terminate(DriverApi& driverApi) noexcept {
     mPlanesX = nullptr;
     mDistancesZ = nullptr;
 
-    mRecordsBuffer.terminate(driverApi);
-    mFroxelBuffer.terminate(driverApi);
+    driverApi.destroyBufferObject(mRecordsBuffer);
+    driverApi.destroyTexture(mFroxelTexture);
 }
 
 void Froxelizer::setOptions(float zLightNear, float zLightFar) noexcept {
@@ -160,7 +158,7 @@ bool Froxelizer::prepare(
             driverApi.allocatePod<FroxelEntry>(FROXEL_BUFFER_ENTRY_COUNT_MAX),
             FROXEL_BUFFER_ENTRY_COUNT_MAX };
 
-    // record buffer (~64 KiB)
+    // record buffer (~16 KiB)
     mRecordBufferUser = {
             driverApi.allocatePod<RecordBufferType>(RECORD_BUFFER_ENTRY_COUNT),
             RECORD_BUFFER_ENTRY_COUNT };
@@ -195,49 +193,41 @@ void Froxelizer::computeFroxelLayout(
         uint2* dim, uint16_t* countX, uint16_t* countY, uint16_t* countZ,
         filament::Viewport const& viewport) noexcept {
 
-    if (USE_NON_SQUARE_FROXELS == false) {
-        const uint32_t width  = std::max(16u, viewport.width);
-        const uint32_t height = std::max(16u, viewport.height);
+    auto roundTo8 = [](uint32_t v) { return (v + 7u) & ~7u; };
 
-        // calculate froxel dimension from FROXEL_BUFFER_ENTRY_COUNT_MAX and viewport
-        // - Start from the maximum number of froxels we can use in the x-y plane
-        size_t froxelSliceCount = FEngine::CONFIG_FROXEL_SLICE_COUNT;
-        size_t froxelPlaneCount = FROXEL_BUFFER_ENTRY_COUNT_MAX / froxelSliceCount;
-        // - compute the number of square froxels we need in width and height, rounded down
-        //   solving: |  froxelCountX * froxelCountY == froxelPlaneCount
-        //            |  froxelCountX / froxelCountY == width / height
-        size_t froxelCountX = size_t(std::sqrt(froxelPlaneCount * width  / height));
-        size_t froxelCountY = size_t(std::sqrt(froxelPlaneCount * height / width));
-        // - compute the froxels dimensions, rounded up
-        size_t froxelSizeX = (width  + froxelCountX - 1) / froxelCountX;
-        size_t froxelSizeY = (height + froxelCountY - 1) / froxelCountY;
-        // - and since our froxels must be square, only keep the largest dimension
-        size_t froxelDimension = std::max(froxelSizeX, froxelSizeY);
+    const uint32_t width  = std::max(16u, viewport.width);
+    const uint32_t height = std::max(16u, viewport.height);
 
-        // Here we recompute the froxel counts which may have changed a little due to the rounding
-        // and the squareness requirement of froxels
-        froxelCountX = (width  + froxelDimension - 1) / froxelDimension;
-        froxelCountY = (height + froxelDimension - 1) / froxelDimension;
+    // calculate froxel dimension from FROXEL_BUFFER_ENTRY_COUNT_MAX and viewport
+    // - Start from the maximum number of froxels we can use in the x-y plane
+    size_t froxelSliceCount = FEngine::CONFIG_FROXEL_SLICE_COUNT;
+    size_t froxelPlaneCount = FROXEL_BUFFER_ENTRY_COUNT_MAX / froxelSliceCount;
+    // - compute the number of square froxels we need in width and height, rounded down
+    //   solving: |  froxelCountX * froxelCountY == froxelPlaneCount
+    //            |  froxelCountX / froxelCountY == width / height
+    size_t froxelCountX = size_t(std::sqrt(froxelPlaneCount * width  / height));
+    size_t froxelCountY = size_t(std::sqrt(froxelPlaneCount * height / width));
+    // - compute the froxels dimensions, rounded up
+    size_t froxelSizeX = (width  + froxelCountX - 1) / froxelCountX;
+    size_t froxelSizeY = (height + froxelCountY - 1) / froxelCountY;
+    // - and since our froxels must be square, only keep the largest dimension
 
-        assert_invariant(froxelCountX);
-        assert_invariant(froxelCountY);
-        assert_invariant(froxelCountX * froxelCountY <= froxelPlaneCount);
+    //  make sure we're at lease multiple of 8 to improve performance in the shader
+    size_t froxelDimension = roundTo8((roundTo8(froxelSizeX) >= froxelSizeY) ? froxelSizeX : froxelSizeY);
 
-        *dim = froxelDimension;
-        *countX = uint16_t(froxelCountX);
-        *countY = uint16_t(froxelCountY);
-        *countZ = uint16_t(froxelSliceCount);
-    } else {
-        // TODO: don't hardcode this
-        *countX = uint16_t(32);
-        *countY = uint16_t(16);
-        *countZ = uint16_t(FEngine::CONFIG_FROXEL_SLICE_COUNT);
-        if (viewport.height > viewport.width) {
-            std::swap(*countX, *countY);
-        }
-         dim->x = (viewport.width  + *countX - 1) / *countX;
-         dim->y = (viewport.height + *countY - 1) / *countY;
-    }
+    // Here we recompute the froxel counts which may have changed a little due to the rounding
+    // and the squareness requirement of froxels
+    froxelCountX = (width  + froxelDimension - 1) / froxelDimension;
+    froxelCountY = (height + froxelDimension - 1) / froxelDimension;
+
+    assert_invariant(froxelCountX);
+    assert_invariant(froxelCountY);
+    assert_invariant(froxelCountX * froxelCountY <= froxelPlaneCount);
+
+    *dim = froxelDimension;
+    *countX = uint16_t(froxelCountX);
+    *countY = uint16_t(froxelCountY);
+    *countZ = uint16_t(froxelSliceCount);
 }
 
 UTILS_NOINLINE
@@ -305,13 +295,12 @@ bool Froxelizer::update() noexcept {
         }
 
         // for the inverse-transformation (view-space z to z-slice)
-        mLinearizer = 1 / linearizer;
+        mLinearizer = 1.0f / linearizer;
         mZLightFar = zLightFar;
-        mLog2ZLightFar = std::log2(zLightFar);
 
         mParamsZ[0] = 0; // updated when camera changes
         mParamsZ[1] = 0; // updated when camera changes
-        mParamsZ[2] = -mLinearizer;
+        mParamsZ[2] = 0; // updated when camera changes
         mParamsZ[3] = mFroxelCountZ;
         mParamsF[0] = 1;
         mParamsF[1] = uint32_t(mFroxelCountX);
@@ -350,7 +339,7 @@ bool Froxelizer::update() noexcept {
 
 
         /*
-         * Now compute the bounding sphere of each froxel, which is needed for spot-lights
+         * Now compute the bounding sphere of each froxel, which is needed for spotlights
          * We intersect 3 planes of the frustum to find each 8 corners.
          * Currently the bounding sphere is computed from the bounding-box, which is probably,
          * not the best.
@@ -386,7 +375,7 @@ bool Froxelizer::update() noexcept {
             // the camera.
             minp.z = -planesZ[iz+1];
             maxp.z = -planesZ[iz];
-            assert_invariant(minp.z < maxp.z);
+            assert_invariant(minp.z <= maxp.z);
 
             for (size_t ix = 0, nx = froxelCountX; ix < nx; ++ix) {
                 // left, right planes for all froxels at ix
@@ -402,7 +391,7 @@ bool Froxelizer::update() noexcept {
                     minp.x = std::min(minp.x, px);
                     maxp.x = std::max(maxp.x, px);
                 }
-                assert_invariant(minp.x < maxp.x);
+                assert_invariant(minp.x <= maxp.x);
                 minMaxX[ix] = float2{ minp.x, maxp.x };
             }
 
@@ -420,7 +409,7 @@ bool Froxelizer::update() noexcept {
                     minp.y = std::min(minp.y, py);
                     maxp.y = std::max(maxp.y, py);
                 }
-                assert_invariant(minp.y < maxp.y);
+                assert_invariant(minp.y <= maxp.y);
 
                 for (size_t ix = 0, nx = froxelCountX; ix < nx; ++ix) {
                     // note: clang vectorizes this loop!
@@ -432,32 +421,23 @@ bool Froxelizer::update() noexcept {
             }
         }
 
-        //    linearizer = log2(zLightFar / zLightNear) / (zcount - 1)
-        //    vz = -exp2((i - zcount) * linearizer) * zLightFar
-        // => i = log2(zLightFar / -vz) / -linearizer + zcount
-
         float Pz = mProjection[2][2];
         float Pw = mProjection[3][2];
         if (mProjection[2][3] != 0) {
-            // perspective projection
-            // (clip) cz = Pz*vz+Pw, cw=-vz
-            // (ndc)  nz = -Pz-Pw/vz
-            // (win)  fz = -Pz*0.5+0.5 - Pw*0.5/vz
-            // ->  = vz = -Pw / (2*fz + Pz-1)
-            // i = log2(zLightFar*(2*fz + Pz-1) / Pw) / -linearizer + zcount
-            mParamsZ[0] = 2.0f * mZLightFar / Pw;
-            mParamsZ[1] =  mZLightFar * (Pz - 1.0f) / Pw;
+            // With our inverted DX convention, we have the simple relation:
+            // z_view = -near / z_screen
+            // ==> i = log2(-z / far) / linearizer + zcount
+            // ==> i = -log2(z_screen * (far/near)) * (1/linearizer) + zcount
+            // ==> i = log2(z_screen * (far/near)) * (-1/linearizer) + zcount
+            mParamsZ[0] = mZLightFar / Pw;
+            mParamsZ[1] = 0.0f;
+            mParamsZ[2] = -mLinearizer;
         } else {
             // orthographic projection
-            // (clip) cz = Pz*vz+Pw, cw=1
-            // (ndc)  nz = Pz*vz+Pw
-            // (win)  fz = Pz*vz*0.5 + Pw*0.5+0.5
-            // ->  = vz = (2*fz - Pw-1)/Pz
-            // i = log2(-vz / zLightFar) / linearizer + zcount
-            // i = log2((-2*fz + Pw + 1)/(Pz*zLightFar)) / linearizer + zcount
-
-            mParamsZ[0] = -2.0f / (Pz * mZLightFar);
-            mParamsZ[1] = (1.0f + Pw) / (Pz * mZLightFar);
+            // z_view = (1 - z_screen) * (near - far) - near
+            // z_view = z_screen * (far - near) - far
+            mParamsZ[0] =       -1.0f / (Pz * mZLightFar);  // -(far-near) / mZLightFar
+            mParamsZ[1] = (0.5f - Pw) / (Pz * mZLightFar);  //         far / mZLightFar
             mParamsZ[2] = mLinearizer;
         }
         uniformsNeedUpdating = true;
@@ -489,7 +469,7 @@ size_t Froxelizer::findSliceZ(float z) const noexcept {
 
     // This whole function is now branch-less.
 
-    int s = int((fast::log2(-z) - mLog2ZLightFar) * mLinearizer + mFroxelCountZ);
+    int s = int( fast::log2(-z / mZLightFar) * mLinearizer + mFroxelCountZ );
 
     // there are cases where z can be negative here, e.g.:
     // - the light is visible, but its center is behind the camera
@@ -513,8 +493,15 @@ std::pair<size_t, size_t> Froxelizer::clipToIndices(float2 const& clip) const no
 
 void Froxelizer::commit(backend::DriverApi& driverApi) {
     // send data to GPU
-    mFroxelBuffer.commit(driverApi, mFroxelBufferUser);
-    mRecordsBuffer.commit(driverApi, mRecordBufferUser);
+    driverApi.update2DImage(mFroxelTexture, 0, 0, 0,
+            FROXEL_BUFFER_WIDTH, FROXEL_BUFFER_HEIGHT,{
+                    mFroxelBufferUser.begin(), mFroxelBufferUser.sizeInBytes(),
+                    PixelBufferDescriptor::PixelDataFormat::RG_INTEGER,
+                    PixelBufferDescriptor::PixelDataType::USHORT });
+
+    driverApi.updateBufferObject(mRecordsBuffer,
+            { mRecordBufferUser.data(), RECORD_BUFFER_ENTRY_COUNT }, 0);
+
 #ifndef NDEBUG
     mFroxelBufferUser.clear();
     mRecordBufferUser.clear();
@@ -573,16 +560,25 @@ void Froxelizer::froxelizeLoop(FEngine& engine,
         const mat4f& projection = mProjection;
         const mat3f& vn = camera.view.upperLeft();
 
+        // We use minimum cone angle of 0.5 degrees because too small angles cause issues in the
+        // sphere/cone intersection test, due to floating-point precision.
+        constexpr float maxInvSin = 114.59301f;         // 1 / sin(0.5 degrees)
+        constexpr float maxCosSquared = 0.99992385f;    // cos(0.5 degrees)^2
+
         for (size_t i = offset; i < count; i += stride) {
             const size_t j = i + FScene::DIRECTIONAL_LIGHTS_COUNT;
             FLightManager::Instance li = instances[j];
             LightParams light = {
                     .position = (camera.view * float4{ spheres[j].xyz, 1 }).xyz, // to view-space
-                    .cosSqr = lcm.getCosOuterSquared(li),   // spot only
-                    .axis = vn * directions[j],             // spot only
-                    .invSin = lcm.getSinInverse(li),        // spot only
+                    .cosSqr = std::min(maxCosSquared, lcm.getCosOuterSquared(li)),  // spot only
+                    .axis = vn * directions[j],                                     // spot only
+                    .invSin = lcm.getSinInverse(li),                                // spot only
                     .radius = spheres[j].w,
             };
+            // infinity means "pointlight"
+            if (light.invSin != std::numeric_limits<float>::infinity()) {
+                light.invSin = std::min(maxInvSin, light.invSin);
+            }
 
             const size_t group = i % GROUP_COUNT;
             const size_t bit   = i / GROUP_COUNT;
@@ -601,7 +597,7 @@ void Froxelizer::froxelizeLoop(FEngine& engine,
         auto *parent = js.createJob();
         for (size_t i = 0; i < GROUP_COUNT; i++) {
             js.run(jobs::createJob(js, parent, std::cref(process),
-                    lightData.size() - FScene::DIRECTIONAL_LIGHTS_COUNT, i, GROUP_COUNT), JobSystem::DONT_SIGNAL);
+                    lightData.size() - FScene::DIRECTIONAL_LIGHTS_COUNT, i, GROUP_COUNT));
         }
         js.runAndWait(parent);
     } else {
@@ -622,6 +618,7 @@ void Froxelizer::froxelizeAssignRecordsCompress() noexcept {
     // inlined and vectorized in release builds.
 
     // this gets very well vectorized...
+
     utils::Slice<LightRecord> records(mLightRecords);
     for (size_t j = 0, jc = FROXEL_BUFFER_ENTRY_COUNT_MAX; j < jc; j++) {
         for (size_t i = 0; i < LightRecord::bitset::WORLD_COUNT; i++) {
@@ -635,11 +632,31 @@ void Froxelizer::froxelizeAssignRecordsCompress() noexcept {
         }
     }
 
+    LightRecord::bitset allLights{};
+    for (size_t j = 0, jc = FROXEL_BUFFER_ENTRY_COUNT_MAX; j < jc; j++) {
+        allLights |= records[j].lights;
+    }
+
     uint16_t offset = 0;
     FroxelEntry* const UTILS_RESTRICT froxels = mFroxelBufferUser.data();
 
     const size_t froxelCountX = mFroxelCountX;
     RecordBufferType* const UTILS_RESTRICT froxelRecords = mRecordBufferUser.data();
+
+    // initialize the first record with all lights in the scene -- this will be used only if
+    // we run out of record space.
+    const uint8_t allLightsCount = (uint8_t)std::min(size_t(255), allLights.count());
+    offset += allLightsCount;
+    allLights.forEachSetBit([point = froxelRecords, froxelRecords](size_t l) mutable {
+        // make sure to keep this code branch-less
+        const size_t word = l / LIGHT_PER_GROUP;
+        const size_t bit  = l % LIGHT_PER_GROUP;
+        l = (bit * GROUP_COUNT) | (word % GROUP_COUNT);
+        *point = (RecordBufferType)l;
+        // we need to "cancel" the write if we have more than 255 spot or point lights
+        // (this is a limitation of the data type used to store the light counts per froxel)
+        point += (point - froxelRecords < 255) ? 1 : 0;
+    });
 
     // how many froxel record entries were reused (for debugging)
     UTILS_UNUSED size_t reused = 0;
@@ -653,10 +670,10 @@ void Froxelizer::froxelizeAssignRecordsCompress() noexcept {
 
         // We have a limitation of 255 spot + 255 point lights per froxel.
         // note: initializer list for union cannot have more than one element
-        FroxelEntry entry; 
-        entry.offset = offset;
-        entry.count = (uint8_t)std::min(size_t(255), b.lights.count());
-
+        FroxelEntry entry{
+                .offset = offset,
+                .count = (uint8_t)std::min(size_t(255), b.lights.count()),
+        };
         const size_t lightCount = entry.count;
 
         if (UTILS_UNLIKELY(offset + lightCount >= RECORD_BUFFER_ENTRY_COUNT)) {
@@ -665,9 +682,12 @@ void Froxelizer::froxelizeAssignRecordsCompress() noexcept {
 #endif
             // note: instead of dropping froxels we could look for similar records we've already
             // filed up.
-            do { // this compiles to memset()
-                froxels[i++].u32 = 0;
-            } while(i < c);
+            do {
+                froxels[i] = { .offset = 0, .count = allLightsCount };
+                if (records[i].lights.none()) {
+                    froxels[i].u32 = 0;
+                }
+            } while(++i < c);
             goto out_of_memory;
         }
 
@@ -706,6 +726,7 @@ void Froxelizer::froxelizeAssignRecordsCompress() noexcept {
         } while(records[i].lights == b.lights);
     }
 out_of_memory:
+    // FIXME: on big-endian systems we need to change the endianness of the record buffer
     ;
 }
 

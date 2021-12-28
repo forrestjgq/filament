@@ -19,19 +19,22 @@
 
 #include "upcast.h"
 
+#include "Allocators.h"
 #include "FrameInfo.h"
+#include "FrameSkipper.h"
+#include "PostProcessManager.h"
 #include "RenderPass.h"
 
-#include "details/Allocators.h"
-#include "details/FrameSkipper.h"
 #include "details/SwapChain.h"
 
 #include "private/backend/DriverApiForward.h"
 
+#include <fg2/FrameGraphId.h>
+#include <fg2/FrameGraphTexture.h>
+
 #include <filament/Renderer.h>
 #include <filament/View.h>
-
-#include <fg2/FrameGraphId.h>
+#include <filament/Viewport.h>
 
 #include <backend/DriverEnums.h>
 #include <backend/Handle.h>
@@ -61,7 +64,7 @@ class ShadowMap;
  * A concrete implementation of the Renderer Interface.
  */
 class FRenderer : public Renderer {
-    static constexpr size_t MAX_FRAMETIME_HISTORY = 32u;
+    static constexpr unsigned MAX_FRAMETIME_HISTORY = 32u;
 
 public:
     explicit FRenderer(FEngine& engine);
@@ -74,24 +77,27 @@ public:
     math::float4 getShaderUserTime() const { return mShaderUserTime; }
 
     // do all the work here!
-    void render(FView const* view);
     void renderJob(ArenaScope& arena, FView& view);
 
-    void copyFrame(FSwapChain* dstSwapChain, Viewport const& dstViewport,
-            Viewport const& srcViewport, CopyFrameFlag flags);
+    bool beginFrame(FSwapChain* swapChain, uint64_t vsyncSteadyClockTimeNano);
 
-    bool beginFrame(FSwapChain* swapChain, uint64_t vsyncSteadyClockTimeNano,
-            backend::FrameScheduledCallback callback, void* user);
-    void endFrame();
-
-    void resetUserTime();
+    void render(FView const* view);
 
     void readPixels(uint32_t xoffset, uint32_t yoffset, uint32_t width, uint32_t height,
             backend::PixelBufferDescriptor&& buffer);
 
+    void copyFrame(FSwapChain* dstSwapChain, Viewport const& dstViewport,
+            Viewport const& srcViewport, CopyFrameFlag flags);
+
+    void endFrame();
+
+    void renderStandaloneView(FView const* view);
+
     void readPixels(FRenderTarget* renderTarget,
             uint32_t xoffset, uint32_t yoffset, uint32_t width, uint32_t height,
             backend::PixelBufferDescriptor&& buffer);
+
+    void resetUserTime();
 
     // Clean-up everything, this is typically called when the client calls Engine::destroyRenderer()
     void terminate(FEngine& engine);
@@ -104,9 +110,9 @@ public:
         FrameRateOptions& frameRateOptions = mFrameRateOptions;
         frameRateOptions = options;
 
-        // History can't be more than 32 frames (~0.5s)
-        frameRateOptions.history = std::min(frameRateOptions.history,
-                uint8_t(MAX_FRAMETIME_HISTORY));
+        // History can't be more than 31 frames (~0.5s), make it odd.
+        frameRateOptions.history = std::min(frameRateOptions.history / 2u * 2u + 1u,
+                MAX_FRAMETIME_HISTORY);
 
         // History must at least be 3 frames
         frameRateOptions.history = std::max(frameRateOptions.history, uint8_t(3));
@@ -134,6 +140,8 @@ private:
             uint32_t xoffset, uint32_t yoffset, uint32_t width, uint32_t height,
             backend::PixelBufferDescriptor&& buffer);
 
+    void renderInternal(FView const* view);
+
     struct ColorPassConfig {
         Viewport vp;
         Viewport svp;
@@ -150,7 +158,7 @@ private:
             FrameGraphTexture::Descriptor const& colorBufferDesc,
             ColorPassConfig const& config,
             PostProcessManager::ColorGradingConfig colorGradingConfig,
-            RenderPass const& pass, FView const& view) const noexcept;
+            RenderPass::Executor const& passExecutor, FView const& view) const noexcept;
 
     FrameGraphId<FrameGraphTexture> refractionPass(FrameGraph& fg,
             ColorPassConfig config,
@@ -196,7 +204,7 @@ private:
     DisplayInfo mDisplayInfo;
     FrameRateOptions mFrameRateOptions;
     ClearOptions mClearOptions;
-    backend::TargetBufferFlags mDiscardedFlags{};
+    backend::TargetBufferFlags mDiscardStartFlags{};
     backend::TargetBufferFlags mClearFlags{};
     tsl::robin_set<FRenderTarget*> mPreviousRenderTargets;
     std::function<void()> mBeginFrameInternal;

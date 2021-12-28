@@ -34,6 +34,7 @@
 
 #include <filameshio/MeshReader.h>
 
+#include <filament/BufferObject.h>
 #include <filament/Camera.h>
 #include <filament/ColorGrading.h>
 #include <filament/Engine.h>
@@ -117,6 +118,7 @@ namespace emscripten {
     namespace internal {
         BIND(Animator)
         BIND(AssetLoader)
+        BIND(BufferObject)
         BIND(Camera)
         BIND(ColorGrading)
         BIND(Engine)
@@ -204,6 +206,7 @@ using SkyBuilder = Skybox::Builder;
 using SurfaceBuilder = SurfaceOrientation::Builder;
 using TexBuilder = Texture::Builder;
 using VertexBuilder = VertexBuffer::Builder;
+using BufferBuilder = BufferObject::Builder;
 
 // We avoid directly exposing backend::BufferDescriptor because embind does not support move
 // semantics and void* doesn't make sense to JavaScript anyway. This little wrapper class is exposed
@@ -361,14 +364,36 @@ value_object<filament::View::AmbientOcclusionOptions>("View$AmbientOcclusionOpti
     .field("bias", &filament::View::AmbientOcclusionOptions::bias)
     .field("resolution", &filament::View::AmbientOcclusionOptions::resolution)
     .field("intensity", &filament::View::AmbientOcclusionOptions::intensity)
-    .field("quality", &filament::View::AmbientOcclusionOptions::quality);
+    .field("bilateralThreshold", &filament::View::AmbientOcclusionOptions::bilateralThreshold)
+    .field("quality", &filament::View::AmbientOcclusionOptions::quality)
+    .field("lowPassFilter", &filament::View::AmbientOcclusionOptions::lowPassFilter)
+    .field("upsampling", &filament::View::AmbientOcclusionOptions::upsampling)
+    .field("enabled", &filament::View::AmbientOcclusionOptions::enabled)
+    .field("bentNormals", &filament::View::AmbientOcclusionOptions::bentNormals)
+    .field("minHorizonAngleRad", &filament::View::AmbientOcclusionOptions::minHorizonAngleRad);
+    // TODO: ssct options
 
 value_object<filament::View::DepthOfFieldOptions>("View$DepthOfFieldOptions")
-    .field("focusDistance", &filament::View::DepthOfFieldOptions::focusDistance)
     .field("cocScale", &filament::View::DepthOfFieldOptions::cocScale)
     .field("maxApertureDiameter", &filament::View::DepthOfFieldOptions::maxApertureDiameter)
     .field("enabled", &filament::View::DepthOfFieldOptions::enabled)
-    .field("filter", &filament::View::DepthOfFieldOptions::filter);
+    .field("filter", &filament::View::DepthOfFieldOptions::filter)
+    .field("nativeResolution", &filament::View::DepthOfFieldOptions::nativeResolution)
+    .field("foregroundRingCount", &filament::View::DepthOfFieldOptions::foregroundRingCount)
+    .field("backgroundRingCount", &filament::View::DepthOfFieldOptions::backgroundRingCount)
+    .field("fastGatherRingCount", &filament::View::DepthOfFieldOptions::fastGatherRingCount)
+    .field("maxForegroundCOC", &filament::View::DepthOfFieldOptions::maxForegroundCOC)
+    .field("maxBackgroundCOC", &filament::View::DepthOfFieldOptions::maxBackgroundCOC);
+
+value_object<filament::View::MultiSampleAntiAliasingOptions>("View$MultiSampleAntiAliasingOptions")
+    .field("enabled", &filament::View::MultiSampleAntiAliasingOptions::enabled)
+    .field("sampleCount", &filament::View::MultiSampleAntiAliasingOptions::sampleCount)
+    .field("customResolve", &filament::View::MultiSampleAntiAliasingOptions::customResolve);
+
+value_object<filament::View::TemporalAntiAliasingOptions>("View$TemporalAntiAliasingOptions")
+    .field("enabled", &filament::View::TemporalAntiAliasingOptions::enabled)
+    .field("filterWidth", &filament::View::TemporalAntiAliasingOptions::filterWidth)
+    .field("feedback", &filament::View::TemporalAntiAliasingOptions::feedback);
 
 value_object<filament::View::BloomOptions>("View$BloomOptions")
     .field("dirtStrength", &filament::View::BloomOptions::dirtStrength)
@@ -379,7 +404,16 @@ value_object<filament::View::BloomOptions>("View$BloomOptions")
     .field("threshold", &filament::View::BloomOptions::threshold)
     .field("enabled", &filament::View::BloomOptions::enabled)
     .field("blendMode", &filament::View::BloomOptions::blendMode)
-    .field("highlight", &filament::View::BloomOptions::highlight);
+    .field("highlight", &filament::View::BloomOptions::highlight)
+    .field("lensFlare", &filament::View::BloomOptions::lensFlare)
+    .field("starburst", &filament::View::BloomOptions::starburst)
+    .field("chromaticAberration", &filament::View::BloomOptions::chromaticAberration)
+    .field("ghostCount", &filament::View::BloomOptions::ghostCount)
+    .field("ghostSpacing", &filament::View::BloomOptions::ghostSpacing)
+    .field("ghostThreshold", &filament::View::BloomOptions::ghostThreshold)
+    .field("haloThickness", &filament::View::BloomOptions::haloThickness)
+    .field("haloRadius", &filament::View::BloomOptions::haloRadius)
+    .field("haloThreshold", &filament::View::BloomOptions::haloThreshold);
 
 // TODO: add support for dirt texture in BloomOptions.
 // Note that simply including the field in the above list causes binding errors for nullptr.
@@ -463,16 +497,27 @@ register_vector<const MaterialInstance*>("MaterialInstanceVector");
 class_<Engine>("Engine")
     .class_function("_create", (Engine* (*)()) [] {
         EM_ASM_INT({
-            const handle = GL.registerContext(Filament.glContext, Filament.glOptions);
+            const options = window.filament_glOptions;
+            const context = window.filament_glContext;
+            const handle = GL.registerContext(context, options);
+            window.filament_contextHandle = handle;
             GL.makeContextCurrent(handle);
         });
         return Engine::create();
     }, allow_raw_pointers())
+
+    .function("_execute", EMBIND_LAMBDA(void, (Engine* engine), {
+        EM_ASM_INT({
+            const handle = window.filament_contextHandle;
+            GL.makeContextCurrent(handle);
+        });
+        engine->execute();
+    }), allow_raw_pointers())
+
     /// destroy ::static method:: Destroys an engine instance and cleans up resources.
     /// engine ::argument:: the instance to destroy
     .class_function("destroy", (void (*)(Engine*)) []
             (Engine* engine) { Engine::destroy(&engine); }, allow_raw_pointers())
-    .function("execute", &Engine::execute)
 
     /// getTransformManager ::method::
     /// ::retval:: an instance of [TransformManager]
@@ -490,6 +535,12 @@ class_<Engine>("Engine")
     /// ::retval:: an instance of [RenderableManager]
     .function("getRenderableManager", EMBIND_LAMBDA(RenderableManager*, (Engine* engine), {
         return &engine->getRenderableManager();
+    }), allow_raw_pointers())
+
+    /// getEntityManager ::method::
+    /// ::retval:: an instance of [utils::EntityManager]
+    .function("getEntityManager", EMBIND_LAMBDA(utils::EntityManager*, (Engine* engine), {
+        return &engine->getEntityManager();
     }), allow_raw_pointers())
 
     /// createSwapChain ::method::
@@ -607,6 +658,7 @@ class_<SwapChain>("SwapChain");
 /// See also the [Engine] methods `createRenderer` and `destroyRenderer`.
 class_<Renderer>("Renderer")
     .function("renderView", &Renderer::render, allow_raw_pointers())
+    .function("renderStandaloneView", &Renderer::renderStandaloneView, allow_raw_pointers())
     /// render ::method:: requests rendering for a single frame on the given [View]
     /// swapChain ::argument:: the [SwapChain] corresponding to the canvas
     /// view ::argument:: the [View] corresponding to the canvas
@@ -633,12 +685,14 @@ class_<View>("View")
     .function("setColorGrading", &View::setColorGrading, allow_raw_pointers())
     .function("setBlendMode", &View::setBlendMode)
     .function("getBlendMode", &View::getBlendMode)
-    .function("getViewport", &View::getViewport)
     .function("setViewport", &View::setViewport)
+    .function("getViewport", &View::getViewport)
     .function("setVisibleLayers", &View::setVisibleLayers)
     .function("setPostProcessingEnabled", &View::setPostProcessingEnabled)
     .function("_setAmbientOcclusionOptions", &View::setAmbientOcclusionOptions)
     .function("_setDepthOfFieldOptions", &View::setDepthOfFieldOptions)
+    .function("_setMultiSampleAntiAliasingOptions", &View::setMultiSampleAntiAliasingOptions)
+    .function("_setTemporalAntiAliasingOptions", &View::setTemporalAntiAliasingOptions)
     .function("_setBloomOptions", &View::setBloomOptions)
     .function("_setFogOptions", &View::setFogOptions)
     .function("_setVignetteOptions", &View::setVignetteOptions)
@@ -647,6 +701,7 @@ class_<View>("View")
     .function("setAntiAliasing", &View::setAntiAliasing)
     .function("getAntiAliasing", &View::getAntiAliasing)
     .function("setSampleCount", &View::setSampleCount)
+    .function("getSampleCount", &View::getSampleCount)
     .function("setRenderTarget", EMBIND_LAMBDA(void, (View* self, RenderTarget* renderTarget), {
         self->setRenderTarget(renderTarget);
     }), allow_raw_pointers());
@@ -740,11 +795,11 @@ class_<Camera>("Camera")
     }), allow_raw_pointers())
 
     .function("getModelMatrix", EMBIND_LAMBDA(flatmat4, (Camera* self), {
-        return flatmat4 { self->getModelMatrix() };
+        return flatmat4 { (filament::math::mat4f)self->getModelMatrix() };
     }), allow_raw_pointers())
 
     .function("getViewMatrix", EMBIND_LAMBDA(flatmat4, (Camera* self), {
-        return flatmat4 { self->getViewMatrix() };
+        return flatmat4 { (filament::math::mat4f)self->getViewMatrix() };
     }), allow_raw_pointers())
 
     .function("getPosition", &Camera::getPosition)
@@ -938,6 +993,10 @@ class_<RenderableBuilder>("RenderableManager$Builder")
             (RenderableBuilder* builder, size_t index, uint16_t order), {
         return &builder->blendOrder(index, order); })
 
+    .BUILDER_FUNCTION("lightChannel", RenderableBuilder,
+            (RenderableBuilder* builder, unsigned int channel, bool enable), {
+        return &builder->lightChannel(channel, enable); })
+
     .function("_build", EMBIND_LAMBDA(int, (RenderableBuilder* builder,
             Engine* engine, utils::Entity entity), {
         return (int) builder->build(*engine, entity);
@@ -964,6 +1023,8 @@ class_<RenderableManager>("RenderableManager")
     .function("setReceiveShadows", &RenderableManager::setReceiveShadows)
     .function("isShadowCaster", &RenderableManager::isShadowCaster)
     .function("isShadowReceiver", &RenderableManager::isShadowReceiver)
+    .function("setLightChannel", &RenderableManager::setLightChannel)
+    .function("getLightChannel", &RenderableManager::getLightChannel)
 
     .function("setBones", EMBIND_LAMBDA(void, (RenderableManager* self,
             RenderableManager::Instance instance, emscripten::val transforms, size_t offset), {
@@ -1102,7 +1163,10 @@ class_<LightBuilder>("LightManager$Builder")
     .BUILDER_FUNCTION("sunHaloSize", LightBuilder,
             (LightBuilder* builder, float value), { return &builder->sunHaloSize(value); })
     .BUILDER_FUNCTION("sunHaloFalloff", LightBuilder,
-            (LightBuilder* builder, float value), { return &builder->sunHaloFalloff(value); });
+            (LightBuilder* builder, float value), { return &builder->sunHaloFalloff(value); })
+    .BUILDER_FUNCTION("lightChannel", LightBuilder,
+            (LightBuilder* builder, unsigned int channel, bool enable), {
+        return &builder->lightChannel(channel, enable); });
 
 class_<LightManager>("LightManager")
     .function("hasComponent", &LightManager::hasComponent)
@@ -1149,12 +1213,33 @@ class_<LightManager>("LightManager")
     .function("getSunHaloFalloff", &LightManager::getSunHaloFalloff)
     .function("setShadowCaster", &LightManager::setShadowCaster)
     .function("isShadowCaster", &LightManager::isShadowCaster)
+    .function("setLightChannel", &LightManager::setLightChannel)
+    .function("getLightChannel", &LightManager::getLightChannel)
     ;
 
 /// LightManager$Instance ::class:: Component instance returned by [LightManager]
 /// Be sure to call the instance's `delete` method when you're done with it.
 class_<LightManager::Instance>("LightManager$Instance");
     /// delete ::method:: Frees an instance obtained via `getInstance`
+
+class_<BufferBuilder>("BufferObject$Builder")
+   .function("_build", EMBIND_LAMBDA(BufferObject*, (BufferBuilder* builder, Engine* engine), {
+       return builder->build(*engine);
+   }), allow_raw_pointers())
+   .BUILDER_FUNCTION("bindingType", BufferBuilder, (BufferBuilder* builder,
+           BufferObject::BindingType bt), {
+       return &builder->bindingType(bt); })
+   .BUILDER_FUNCTION("size", BufferBuilder, (BufferBuilder* builder, int byteCount), {
+       return &builder->size(byteCount); });
+
+/// BufferObject ::core class:: Represents a single GPU buffer.
+class_<BufferObject>("BufferObject")
+   .class_function("Builder", (BufferBuilder (*)()) [] { return BufferBuilder(); })
+   .function("getByteCount", &BufferObject::getByteCount)
+   .function("_setBuffer", EMBIND_LAMBDA(void, (BufferObject* self,
+           Engine* engine, BufferDescriptor bd, uint32_t byteOffset), {
+       self->setBuffer(*engine, std::move(*bd.bd), byteOffset);
+   }), allow_raw_pointers());
 
 class_<VertexBuilder>("VertexBuffer$Builder")
     .function("_build", EMBIND_LAMBDA(VertexBuffer*, (VertexBuilder* builder, Engine* engine), {
@@ -1169,6 +1254,8 @@ class_<VertexBuilder>("VertexBuffer$Builder")
         return &builder->attribute(attr, bufferIndex, attrType, byteOffset, byteStride); })
     .BUILDER_FUNCTION("vertexCount", VertexBuilder, (VertexBuilder* builder, int count), {
         return &builder->vertexCount(count); })
+    .BUILDER_FUNCTION("enableBufferObjects", VertexBuilder, (VertexBuilder* builder, bool enable), {
+        return &builder->enableBufferObjects(enable); })
     .BUILDER_FUNCTION("normalized", VertexBuilder, (VertexBuilder* builder,
             VertexAttribute attrib), {
         return &builder->normalized(attrib); })
@@ -1181,6 +1268,7 @@ class_<VertexBuilder>("VertexBuffer$Builder")
 /// VertexBuffer ::core class:: Bundle of buffers and associated vertex attributes.
 class_<VertexBuffer>("VertexBuffer")
     .class_function("Builder", (VertexBuilder (*)()) [] { return VertexBuilder(); })
+    .function("setBufferObjectAt", &VertexBuffer::setBufferObjectAt, allow_raw_pointers())
     .function("_setBufferAt", EMBIND_LAMBDA(void, (VertexBuffer* self,
             Engine* engine, uint8_t bufferIndex, BufferDescriptor vbd, uint32_t byteOffset), {
         self->setBufferAt(*engine, bufferIndex, std::move(*vbd.bd), byteOffset);
@@ -1254,7 +1342,9 @@ class_<MaterialInstance>("MaterialInstance")
     .function("setDepthCulling", &MaterialInstance::setDepthCulling);
 
 class_<TextureSampler>("TextureSampler")
-    .constructor<backend::SamplerMinFilter, backend::SamplerMagFilter, backend::SamplerWrapMode>();
+    .constructor<backend::SamplerMinFilter, backend::SamplerMagFilter, backend::SamplerWrapMode>()
+    .function("setAnisotropy", &TextureSampler::setAnisotropy)
+    .function("setCompareMode", &TextureSampler::setCompareMode);
 
 /// Texture ::core class:: 2D image or cubemap that can be sampled by the GPU, possibly mipmapped.
 class_<Texture>("Texture")
@@ -1745,17 +1835,20 @@ class_<FilamentAsset>("gltfio$FilamentAsset")
     .function("getName", EMBIND_LAMBDA(std::string, (FilamentAsset* self, utils::Entity entity), {
         return std::string(self->getName(entity));
     }), allow_raw_pointers())
+    .function("getExtras", EMBIND_LAMBDA(std::string, (FilamentAsset* self, utils::Entity entity), {
+        return std::string(self->getExtras(entity));
+    }), allow_raw_pointers())
     .function("getAnimator", &FilamentAsset::getAnimator, allow_raw_pointers())
     .function("getWireframe", &FilamentAsset::getWireframe)
     .function("getEngine", &FilamentAsset::getEngine, allow_raw_pointers())
     .function("releaseSourceData", &FilamentAsset::releaseSourceData);
 
 class_<FilamentInstance>("gltfio$FilamentInstance")
+    .function("getAsset", &FilamentInstance::getAsset, allow_raw_pointers())
     .function("getEntities", EMBIND_LAMBDA(EntityVector, (FilamentInstance* self), {
         const utils::Entity* ptr = self->getEntities();
         return EntityVector(ptr, ptr + self->getEntityCount());
     }), allow_raw_pointers())
-
     .function("getRoot", &FilamentInstance::getRoot)
     .function("getAnimator", &FilamentInstance::getAnimator, allow_raw_pointers());
 
@@ -1855,7 +1948,19 @@ class_<JsonSerializer>("JsonSerializer")
 class_<SimpleViewer>("SimpleViewer")
     .constructor<Engine*, Scene*, View*, int>()
     .function("renderUserInterface", &SimpleViewer::renderUserInterface, allow_raw_pointers())
-    .function("getSettings", &SimpleViewer::getSettings);
+    .function("getSettings", &SimpleViewer::getSettings)
+    .function("mouseEvent", &SimpleViewer::mouseEvent)
+    .function("keyDownEvent", &SimpleViewer::keyDownEvent)
+    .function("keyUpEvent", &SimpleViewer::keyUpEvent)
+    .function("keyPressEvent", &SimpleViewer::keyPressEvent);
+
+function("fitIntoUnitCube", EMBIND_LAMBDA(flatmat4, (Aabb box, float zoffset), {
+    return flatmat4 { fitIntoUnitCube(box, zoffset) };
+}));
+
+function("multiplyMatrices", EMBIND_LAMBDA(flatmat4, (flatmat4 a, flatmat4 b), {
+    return flatmat4 { a.m * b.m };
+}));
 
 } // EMSCRIPTEN_BINDINGS
 

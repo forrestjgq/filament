@@ -17,6 +17,7 @@
 #include "filamat/MaterialBuilder.h"
 
 #include <atomic>
+#include <utility>
 #include <vector>
 
 #include <utils/JobSystem.h>
@@ -141,13 +142,13 @@ MaterialBuilder& MaterialBuilder::fileName(const char* fileName) noexcept {
 }
 
 MaterialBuilder& MaterialBuilder::material(const char* code, size_t line) noexcept {
-    mMaterialCode.setUnresolved(CString(code));
-    mMaterialCode.setLineOffset(line);
+    mMaterialFragmentCode.setUnresolved(CString(code));
+    mMaterialFragmentCode.setLineOffset(line);
     return *this;
 }
 
 MaterialBuilder& MaterialBuilder::includeCallback(IncludeCallback callback) noexcept {
-    mIncludeCallback = callback;
+    mIncludeCallback = std::move(callback);
     return *this;
 }
 
@@ -180,27 +181,29 @@ MaterialBuilder& MaterialBuilder::variable(Variable v, const char* name) noexcep
     return *this;
 }
 
-MaterialBuilder& MaterialBuilder::parameter(UniformType type, const char* name) noexcept {
+MaterialBuilder& MaterialBuilder::parameter(
+        UniformType type, ParameterPrecision precision, const char* name) noexcept {
     ASSERT_POSTCONDITION(mParameterCount < MAX_PARAMETERS_COUNT, "Too many parameters");
-    mParameters[mParameterCount++] = { name, type, 1 };
-    return *this;
-}
-
-MaterialBuilder& MaterialBuilder::parameter(UniformType type, size_t size, const char* name) noexcept {
-    ASSERT_POSTCONDITION(mParameterCount < MAX_PARAMETERS_COUNT, "Too many parameters");
-    mParameters[mParameterCount++] = { name, type, size };
+    mParameters[mParameterCount++] = { name, type, 1, precision };
     return *this;
 }
 
 MaterialBuilder& MaterialBuilder::parameter(
-        SamplerType samplerType, SamplerFormat format, SamplerPrecision precision, const char* name) noexcept {
+        UniformType type, size_t size, ParameterPrecision precision, const char* name) noexcept {
+    ASSERT_POSTCONDITION(mParameterCount < MAX_PARAMETERS_COUNT, "Too many parameters");
+    mParameters[mParameterCount++] = { name, type, size, precision };
+    return *this;
+}
+
+MaterialBuilder& MaterialBuilder::parameter(
+        SamplerType samplerType, SamplerFormat format, ParameterPrecision precision, const char* name) noexcept {
     ASSERT_POSTCONDITION(mParameterCount < MAX_PARAMETERS_COUNT, "Too many parameters");
     mParameters[mParameterCount++] = { name, samplerType, format, precision };
     return *this;
 }
 
 MaterialBuilder& MaterialBuilder::parameter(SubpassType subpassType, SamplerFormat format,
-        SamplerPrecision precision, const char* name) noexcept {
+        ParameterPrecision precision, const char* name) noexcept {
     ASSERT_PRECONDITION(format == SamplerFormat::FLOAT,
             "Subpass parameters must have FLOAT format.");
 
@@ -215,39 +218,39 @@ MaterialBuilder& MaterialBuilder::parameter(SubpassType subpassType, SamplerForm
 
 MaterialBuilder& MaterialBuilder::parameter(
         SamplerType samplerType, SamplerFormat format, const char* name) noexcept {
-    return parameter(samplerType, format, SamplerPrecision::DEFAULT, name);
+    return parameter(samplerType, format, ParameterPrecision::DEFAULT, name);
 }
 
 MaterialBuilder& MaterialBuilder::parameter(
-        SamplerType samplerType, SamplerPrecision precision, const char* name) noexcept {
+        SamplerType samplerType, ParameterPrecision precision, const char* name) noexcept {
     return parameter(samplerType, SamplerFormat::FLOAT, precision, name);
 }
 
 MaterialBuilder& MaterialBuilder::parameter(
         SamplerType samplerType, const char* name) noexcept {
-    return parameter(samplerType, SamplerFormat::FLOAT, SamplerPrecision::DEFAULT, name);
+    return parameter(samplerType, SamplerFormat::FLOAT, ParameterPrecision::DEFAULT, name);
 }
 
 MaterialBuilder& MaterialBuilder::parameter(SubpassType subpassType, SamplerFormat format,
         const char* name) noexcept {
-    return parameter(subpassType, format, SamplerPrecision::DEFAULT, name);
+    return parameter(subpassType, format, ParameterPrecision::DEFAULT, name);
 }
 
-MaterialBuilder& MaterialBuilder::parameter(SubpassType subpassType, SamplerPrecision precision,
+MaterialBuilder& MaterialBuilder::parameter(SubpassType subpassType, ParameterPrecision precision,
         const char* name) noexcept {
     return parameter(subpassType, SamplerFormat::FLOAT, precision, name);
 }
 
 MaterialBuilder& MaterialBuilder::parameter(SubpassType subpassType, const char* name) noexcept {
-    return parameter(subpassType, SamplerFormat::FLOAT, SamplerPrecision::DEFAULT, name);
+    return parameter(subpassType, SamplerFormat::FLOAT, ParameterPrecision::DEFAULT, name);
 }
 
-MaterialBuilder& MaterialBuilder::require(filament::VertexAttribute attribute) noexcept {
+MaterialBuilder& MaterialBuilder::require(VertexAttribute attribute) noexcept {
     mRequiredAttributes.set(attribute);
     return *this;
 }
 
-MaterialBuilder& MaterialBuilder::materialDomain(MaterialDomain materialDomain) noexcept {
+MaterialBuilder& MaterialBuilder::materialDomain(filament::MaterialDomain materialDomain) noexcept {
     mMaterialDomain = materialDomain;
     return *this;
 }
@@ -259,6 +262,11 @@ MaterialBuilder& MaterialBuilder::refractionMode(RefractionMode refraction) noex
 
 MaterialBuilder& MaterialBuilder::refractionType(RefractionType refractionType) noexcept {
     mRefractionType = refractionType;
+    return *this;
+}
+
+MaterialBuilder& MaterialBuilder::quality(ShaderQuality quality) noexcept {
+    mShaderQuality = quality;
     return *this;
 }
 
@@ -314,6 +322,11 @@ MaterialBuilder& MaterialBuilder::shadowMultiplier(bool shadowMultiplier) noexce
     return *this;
 }
 
+MaterialBuilder& MaterialBuilder::transparentShadow(bool transparentShadow) noexcept {
+    mTransparentShadow = transparentShadow;
+    return *this;
+}
+
 MaterialBuilder& MaterialBuilder::specularAntiAliasing(bool specularAntiAliasing) noexcept {
     mSpecularAntiAliasing = specularAntiAliasing;
     return *this;
@@ -336,6 +349,11 @@ MaterialBuilder& MaterialBuilder::clearCoatIorChange(bool clearCoatIorChange) no
 
 MaterialBuilder& MaterialBuilder::flipUV(bool flipUV) noexcept {
     mFlipUV = flipUV;
+    return *this;
+}
+
+MaterialBuilder& MaterialBuilder::customSurfaceShading(bool customSurfaceShading) noexcept {
+    mCustomSurfaceShading = customSurfaceShading;
     return *this;
 }
 
@@ -412,7 +430,7 @@ void MaterialBuilder::prepareToBuild(MaterialInfo& info) noexcept {
         if (param.isSampler()) {
             sbb.add(param.name, param.samplerType, param.format, param.precision);
         } else if (param.isUniform()) {
-            ibb.add(param.name, param.size, param.uniformType);
+            ibb.add(param.name, param.size, param.uniformType, param.precision);
         } else if (param.isSubpass()) {
             // For now, we only support a single subpass for attachment 0.
             // Subpasses blong to the "MaterialParams" block.
@@ -455,12 +473,15 @@ void MaterialBuilder::prepareToBuild(MaterialInfo& info) noexcept {
     info.postLightingBlendingMode = mPostLightingBlendingMode;
     info.shading = mShading;
     info.hasShadowMultiplier = mShadowMultiplier;
+    info.hasTransparentShadow = mTransparentShadow;
     info.multiBounceAO = mMultiBounceAO;
     info.multiBounceAOSet = mMultiBounceAOSet;
     info.specularAO = mSpecularAO;
     info.specularAOSet = mSpecularAOSet;
     info.refractionMode = mRefractionMode;
     info.refractionType = mRefractionType;
+    info.quality = mShaderQuality;
+    info.hasCustomSurfaceShading = mCustomSurfaceShading;
 }
 
 bool MaterialBuilder::findProperties(filament::backend::ShaderType type,
@@ -500,7 +521,7 @@ bool MaterialBuilder::findAllProperties() noexcept {
     return true;
 #else
     GLSLToolsLite glslTools;
-    if (glslTools.findProperties(ShaderType::FRAGMENT, mMaterialCode.getResolved(), mProperties)) {
+    if (glslTools.findProperties(ShaderType::FRAGMENT, mMaterialFragmentCode.getResolved(), mProperties)) {
         return glslTools.findProperties(
                 ShaderType::VERTEX, mMaterialVertexCode.getResolved(), mProperties);
     }
@@ -527,7 +548,8 @@ bool MaterialBuilder::runSemanticAnalysis() noexcept {
     if (!result) return false;
 
     shaderCode = peek(ShaderType::FRAGMENT, mSemanticCodeGenParams, mProperties);
-    result = glslTools.analyzeFragmentShader(shaderCode, model, mMaterialDomain, targetApi);
+    result = glslTools.analyzeFragmentShader(shaderCode, model, mMaterialDomain, targetApi,
+            mCustomSurfaceShading);
     return result;
 #else
     return true;
@@ -566,7 +588,7 @@ bool MaterialBuilder::ShaderCode::resolveIncludes(IncludeCallback callback,
             .lineNumberOffset = getLineOffset(),
             .name = utils::CString("")
         };
-        if (!::filamat::resolveIncludes(source, callback, options)) {
+        if (!::filamat::resolveIncludes(source, std::move(callback), options)) {
             return false;
         }
         mCode = source.text;
@@ -614,14 +636,11 @@ bool MaterialBuilder::generateShaders(JobSystem& jobSystem, const std::vector<Va
     // End: must be protected by lock
 
     ShaderGenerator sg(
-            mProperties, mVariables, mOutputs, mDefines, mMaterialCode.getResolved(),
-            mMaterialCode.getLineOffset(), mMaterialVertexCode.getResolved(),
+            mProperties, mVariables, mOutputs, mDefines, mMaterialFragmentCode.getResolved(),
+            mMaterialFragmentCode.getLineOffset(), mMaterialVertexCode.getResolved(),
             mMaterialVertexCode.getLineOffset(), mMaterialDomain);
 
-    bool emptyVertexCode = mMaterialVertexCode.getResolved().empty();
-    bool customDepth = sg.hasCustomDepthShader() ||
-            mBlendingMode == BlendingMode::MASKED || !emptyVertexCode;
-    container.addSimpleChild<bool>(ChunkType::MaterialHasCustomDepthShader, customDepth);
+    container.addSimpleChild<bool>(ChunkType::MaterialHasCustomDepthShader, needsStandardDepthProgram());
 
     std::atomic_bool cancelJobs(false);
     bool firstJob = true;
@@ -702,7 +721,8 @@ bool MaterialBuilder::generateShaders(JobSystem& jobSystem, const std::vector<Va
                 GLSLPostProcessor::Config config{
                         .shaderType = v.stage,
                         .shaderModel = shaderModel,
-                        .glsl = {}
+                        .domain = mMaterialDomain,
+                        .glsl = {},
                 };
 
                 config.hasFramebufferFetch = mEnableFramebufferFetch;
@@ -723,7 +743,7 @@ bool MaterialBuilder::generateShaders(JobSystem& jobSystem, const std::vector<Va
 
                 if (targetApi == TargetApi::OPENGL) {
                     if (targetLanguage == TargetLanguage::SPIRV) {
-                        sg.fixupExternalSamplers(shaderModel, shader, info);
+                        ShaderGenerator::fixupExternalSamplers(shaderModel, shader, info);
                     }
                 }
 
@@ -890,8 +910,14 @@ Package MaterialBuilder::build(JobSystem& jobSystem) noexcept {
     }
 
     // Resolve all the #include directives within user code.
-    if (!mMaterialCode.resolveIncludes(mIncludeCallback, mFileName) ||
+    if (!mMaterialFragmentCode.resolveIncludes(mIncludeCallback, mFileName) ||
         !mMaterialVertexCode.resolveIncludes(mIncludeCallback, mFileName)) {
+        return Package::invalidPackage();
+    }
+
+    if (mCustomSurfaceShading && mShading != Shading::LIT) {
+        utils::slog.e << "Error: customSurfaceShading can only be used with lit materials."
+                      << utils::io::endl;
         return Package::invalidPackage();
     }
 
@@ -901,9 +927,7 @@ Package MaterialBuilder::build(JobSystem& jobSystem) noexcept {
 
     // Run checks, in order.
     // The call to findProperties populates mProperties and must come before runSemanticAnalysis.
-    if (!checkLiteRequirements() ||
-        !findAllProperties() ||
-        !runSemanticAnalysis()) {
+    if (!checkLiteRequirements() || !findAllProperties() || !runSemanticAnalysis()) {
         // Return an empty package to signal a failure to build the material.
         return Package::invalidPackage();
     }
@@ -938,10 +962,30 @@ Package MaterialBuilder::build(JobSystem& jobSystem) noexcept {
     return package;
 }
 
-const std::string MaterialBuilder::peek(filament::backend::ShaderType type,
+bool MaterialBuilder::hasCustomVaryings() const noexcept {
+    for (const auto& variable : mVariables) {
+        if (!variable.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MaterialBuilder::needsStandardDepthProgram() const noexcept {
+    const bool hasEmptyVertexCode = mMaterialVertexCode.getResolved().empty();
+    return !hasEmptyVertexCode ||
+           hasCustomVaryings() ||
+           mBlendingMode == BlendingMode::MASKED ||
+           (mTransparentShadow &&
+            (mBlendingMode == BlendingMode::TRANSPARENT ||
+             mBlendingMode == BlendingMode::FADE));
+}
+
+std::string MaterialBuilder::peek(filament::backend::ShaderType type,
         const CodeGenParams& params, const PropertyList& properties) noexcept {
-    ShaderGenerator sg(properties, mVariables, mOutputs, mDefines, mMaterialCode.getResolved(),
-            mMaterialCode.getLineOffset(), mMaterialVertexCode.getResolved(),
+
+    ShaderGenerator sg(properties, mVariables, mOutputs, mDefines, mMaterialFragmentCode.getResolved(),
+            mMaterialFragmentCode.getLineOffset(), mMaterialVertexCode.getResolved(),
             mMaterialVertexCode.getLineOffset(), mMaterialDomain);
 
     MaterialInfo info;
@@ -958,8 +1002,6 @@ const std::string MaterialBuilder::peek(filament::backend::ShaderType type,
         return sg.createFragmentProgram(ShaderModel(params.shaderModel), params.targetApi,
                 params.targetLanguage, info, 0, mInterpolation);
     }
-
-    return std::string("");
 }
 
 void MaterialBuilder::writeCommonChunks(ChunkContainer& container, MaterialInfo& info) const noexcept {

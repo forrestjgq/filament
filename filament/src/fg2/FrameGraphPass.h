@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef TNT_FILAMENT_FG2_PASS_H
-#define TNT_FILAMENT_FG2_PASS_H
+#ifndef TNT_FILAMENT_FG2_FRAMEGRAPHPASS_H
+#define TNT_FILAMENT_FG2_FRAMEGRAPHPASS_H
 
 #include "private/backend/DriverApiForward.h"
 
@@ -58,7 +58,7 @@ class FrameGraphPass : public FrameGraphPassBase {
     friend class FrameGraph;
 
     // allow our allocators to instantiate us
-    template<typename, typename, typename>
+    template<typename, typename, typename, typename>
     friend class utils::Arena;
 
     explicit FrameGraphPass(Execute&& execute) noexcept
@@ -79,4 +79,4 @@ public:
 
 } // namespace filament
 
-#endif //TNT_FILAMENT_FG2_PASS_H
+#endif //TNT_FILAMENT_FG2_FRAMEGRAPHPASS_H

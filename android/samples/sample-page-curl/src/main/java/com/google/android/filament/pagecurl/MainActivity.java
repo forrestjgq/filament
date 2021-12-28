@@ -70,11 +70,11 @@ public class MainActivity extends Activity
     private Page mPage;
     private PageMaterials mPageMaterials;
     private Scene mScene;
-    private Texture[] mTextures = new Texture[2];
+    private final Texture[] mTextures = new Texture[2];
     private @Entity int mLight;
     private IndirectLight mIndirectLight;
 
-    private float[] mTouchDownPoint = new float[2];
+    private final float[] mTouchDownPoint = new float[2];
     private float mTouchDownValue = 0;
     private float mPageAnimationRadians = 0;
     private float mPageAnimationValue = 0;
@@ -148,7 +148,7 @@ public class MainActivity extends Activity
         mRenderer = mEngine.createRenderer();
         mScene = mEngine.createScene();
         mView = mEngine.createView();
-        mCamera = mEngine.createCamera();
+        mCamera = mEngine.createCamera(mEngine.getEntityManager().create());
 
         mCamera.lookAt(0, 0, 3, 0, 0, 0, 0, 1, 0);
 
@@ -223,9 +223,10 @@ public class MainActivity extends Activity
 
         mEngine.destroyView(mView);
         mEngine.destroyScene(mScene);
-        mEngine.destroyCamera(mCamera);
+        mEngine.destroyCameraComponent(mCamera.getEntity());
 
         EntityManager.get().destroy(mPage.renderable);
+        EntityManager.get().destroy(mCamera.getEntity());
 
         mEngine.destroy();
     }

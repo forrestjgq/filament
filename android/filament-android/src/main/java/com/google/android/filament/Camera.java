@@ -29,7 +29,7 @@ import androidx.annotation.Size;
  *
  * In Filament, Camera is a component that must be associated with an entity. To do so,
  * use {@link Engine#createCamera(int)}. A Camera component is destroyed using
- * {@link Engine#destroyCamera(Camera)}.
+ * {@link Engine#destroyCameraComponent(int Entity)} ()}.
  *
  * <pre>
  *  Camera myCamera = engine.createCamera(myCameraEntity);
@@ -37,7 +37,7 @@ import androidx.annotation.Size;
  *  myCamera.lookAt(0, 1.60, 1,
  *                  0, 0, 0,
  *                  0, 1, 0);
- *  engine.destroyCamera(myCamera);
+ *  engine.destroyCameraComponent(myCameraEntity);
  * </pre>
  *
  *
@@ -121,6 +121,9 @@ import androidx.annotation.Size;
 public class Camera {
     private long mNativeObject;
 
+    @Entity
+    private final int mEntity;
+
     /**
      * Denotes the projection type used by this camera.
      * @see #setProjection
@@ -143,8 +146,9 @@ public class Camera {
         HORIZONTAL
     }
 
-    Camera(long nativeCamera) {
+    Camera(long nativeCamera, @Entity int entity) {
         mNativeObject = nativeCamera;
+        mEntity = entity;
     }
 
     /**
@@ -250,6 +254,9 @@ public class Camera {
     /**
      * Sets a custom projection matrix.
      *
+     * <p>The projection matrix must define an NDC system that must match the OpenGL convention,
+     * that is all 3 axis are mapped to [-1, 1].</p>
+     *
      * @param inProjection  custom projection matrix for rendering and culling
      *
      * @param near          distance in world units from the camera to the near plane.
@@ -274,6 +281,9 @@ public class Camera {
 
     /**
      * Sets a custom projection matrix.
+     *
+     * <p>The projection matrices must define an NDC system that must match the OpenGL convention,
+     * that is all 3 axis are mapped to [-1, 1].</p>
      *
      * @param inProjection              custom projection matrix for rendering.
      *
@@ -411,6 +421,20 @@ public class Camera {
 
     /**
      * Sets the camera's view matrix.
+     * <p>
+     * Helper method to set the camera's entity transform component.
+     * Remember that the Camera "looks" towards its -z axis.
+     * <p>
+     *
+     * @param viewMatrix The camera position and orientation provided as a <b>rigid transform</b> matrix.
+     */
+    public void setModelMatrix(@NonNull @Size(min = 16) double[] viewMatrix) {
+        Asserts.assertMat4In(viewMatrix);
+        nSetModelMatrixFp64(getNativeObject(), viewMatrix);
+    }
+
+    /**
+     * Sets the camera's view matrix.
      *
      * @param eyeX      x-axis position of the camera in world space
      * @param eyeY      y-axis position of the camera in world space
@@ -428,6 +452,7 @@ public class Camera {
     }
 
     /**
+     * Gets the distance to the near plane
      * @return Distance to the near plane
      */
     public float getNear() {
@@ -435,6 +460,7 @@ public class Camera {
     }
 
     /**
+     * Gets the distance to the far plane
      * @return Distance to the far plane
      */
     public float getCullingFar() {
@@ -505,6 +531,22 @@ public class Camera {
     }
 
     /**
+     * Retrieves the camera's model matrix. The model matrix encodes the camera position and
+     * orientation, or pose.
+     *
+     * @param out A 16-double array where the model matrix will be stored, or null in which
+     *            case a new array is allocated.
+     *
+     * @return A 16-double array containing the camera's pose as a column-major matrix.
+     */
+    @NonNull @Size(min = 16)
+    public double[] getModelMatrix(@Nullable @Size(min = 16) double[] out) {
+        out = Asserts.assertMat4(out);
+        nGetModelMatrixFp64(getNativeObject(), out);
+        return out;
+    }
+
+    /**
      * Retrieves the camera's view matrix. The view matrix is the inverse of the model matrix.
      *
      * @param out A 16-float array where the model view will be stored, or null in which
@@ -516,6 +558,21 @@ public class Camera {
     public float[] getViewMatrix(@Nullable @Size(min = 16) float[] out) {
         out = Asserts.assertMat4f(out);
         nGetViewMatrix(getNativeObject(), out);
+        return out;
+    }
+
+    /**
+     * Retrieves the camera's view matrix. The view matrix is the inverse of the model matrix.
+     *
+     * @param out A 16-double array where the model view will be stored, or null in which
+     *            case a new array is allocated.
+     *
+     * @return A 16-double array containing the camera's view as a column-major matrix.
+     */
+    @NonNull @Size(min = 16)
+    public double[] getViewMatrix(@Nullable @Size(min = 16) double[] out) {
+        out = Asserts.assertMat4(out);
+        nGetViewMatrixFp64(getNativeObject(), out);
         return out;
     }
 
@@ -631,6 +688,7 @@ public class Camera {
     }
 
     /**
+     * Gets the aperture in f-stops
      * @return Aperture in f-stops
      */
     public float getAperture() {
@@ -638,6 +696,7 @@ public class Camera {
     }
 
     /**
+     * Gets the shutter speed in seconds
      * @return Shutter speed in seconds
      */
     public float getShutterSpeed() {
@@ -645,6 +704,7 @@ public class Camera {
     }
 
     /**
+     * Gets the focal length in meters
      * @return focal length in meters [m]
      */
     public double getFocalLength() {
@@ -661,6 +721,7 @@ public class Camera {
     }
 
     /**
+     * Gets the distance from the camera to the focus plane in world units
      * @return Distance from the camera to the focus plane in world units
      */
     public float getFocusDistance() {
@@ -668,10 +729,20 @@ public class Camera {
     }
 
     /**
+     * Gets the sensitivity in ISO
      * @return Sensitivity in ISO
      */
     public float getSensitivity() {
         return nGetSensitivity(getNativeObject());
+    }
+
+    /**
+     * Gets the entity representing this Camera
+     * @return the entity this Camera component is attached to
+     */
+    @Entity
+    public int getEntity() {
+        return mEntity;
     }
 
     /**
@@ -714,6 +785,7 @@ public class Camera {
     private static native void nSetScaling(long nativeCamera, double x, double y);
     private static native void nSetShift(long nativeCamera, double x, double y);
     private static native void nSetModelMatrix(long nativeCamera, float[] in);
+    private static native void nSetModelMatrixFp64(long nativeCamera, double[] in);
     private static native void nLookAt(long nativeCamera, double eyeX, double eyeY, double eyeZ, double centerX, double centerY, double centerZ, double upX, double upY, double upZ);
     private static native float nGetNear(long nativeCamera);
     private static native float nGetCullingFar(long nativeCamera);
@@ -721,7 +793,9 @@ public class Camera {
     private static native void nGetCullingProjectionMatrix(long nativeCamera, double[] out);
     private static native void nGetScaling(long nativeCamera, double[] out);
     private static native void nGetModelMatrix(long nativeCamera, float[] out);
+    private static native void nGetModelMatrixFp64(long nativeCamera, double[] out);
     private static native void nGetViewMatrix(long nativeCamera, float[] out);
+    private static native void nGetViewMatrixFp64(long nativeCamera, double[] out);
     private static native void nGetPosition(long nativeCamera, float[] out);
     private static native void nGetLeftVector(long nativeCamera, float[] out);
     private static native void nGetUpVector(long nativeCamera, float[] out);

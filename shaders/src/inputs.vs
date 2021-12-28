@@ -56,7 +56,8 @@ layout(location = LOCATION_CUSTOM6) in vec4 mesh_custom6;
 layout(location = LOCATION_CUSTOM7) in vec4 mesh_custom7;
 #endif
 
-LAYOUT_LOCATION(4) out highp vec3 vertex_worldPosition;
+LAYOUT_LOCATION(4) out highp vec4 vertex_worldPosition;
+
 #if defined(HAS_ATTRIBUTE_TANGENTS)
 LAYOUT_LOCATION(5) SHADING_INTERPOLATION out mediump vec3 vertex_worldNormal;
 #if defined(MATERIAL_NEEDS_TBN)
@@ -78,8 +79,4 @@ LAYOUT_LOCATION(10) out highp vec4 vertex_uv01;
 
 #if defined(HAS_SHADOWING) && defined(HAS_DIRECTIONAL_LIGHTING)
 LAYOUT_LOCATION(11) out highp vec4 vertex_lightSpacePosition;
-#endif
-
-#if defined(HAS_SHADOWING) && defined(HAS_DYNAMIC_LIGHTING)
-LAYOUT_LOCATION(12) out highp vec4 vertex_spotLightSpacePosition[MAX_SHADOW_CASTING_SPOTS];
 #endif

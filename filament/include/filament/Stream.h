@@ -22,6 +22,7 @@
 #include <backend/DriverEnums.h>
 
 #include <backend/PixelBufferDescriptor.h>
+#include <backend/CallbackHandler.h>
 
 #include <utils/compiler.h>
 
@@ -114,7 +115,8 @@ public:
          * opaque platform object such as a SurfaceTexture on Android.
          *
          * @param stream An opaque native stream handle. e.g.: on Android this is an
-         *                     `android/graphics/SurfaceTexture` JNI jobject.
+         *                     `android/graphics/SurfaceTexture` JNI jobject. The wrap mode must
+         *                     be CLAMP_TO_EDGE.
          *
          * @return This Builder, for chaining calls.
          */
@@ -126,12 +128,15 @@ public:
          *
          * @param externalTextureId An opaque texture id (typically a GLuint created with glGenTextures)
          *                          In a context shared with filament. In that case this texture's
-         *                          target must be GL_TEXTURE_EXTERNAL_OES.
+         *                          target must be GL_TEXTURE_EXTERNAL_OES and the wrap mode must
+         *                          be CLAMP_TO_EDGE.
          *
          * @return This Builder, for chaining calls.
          *
          * @see Texture::setExternalStream()
+         * @deprecated this method existed only for ARCore which doesn't need this anymore, use Texture::import() instead.
          */
+        UTILS_DEPRECATED
         Builder& stream(intptr_t externalTextureId) noexcept;
 
         /**
@@ -194,6 +199,18 @@ public:
      *                   releases the image.
      */
     void setAcquiredImage(void* image, Callback callback, void* userdata) noexcept;
+
+    /**
+     * @see setAcquiredImage(void*, Callback, void*)
+     *
+     * @param image      Pointer to AHardwareBuffer, casted to void* since this is a public header.
+     * @param handler    Handler to dispatch the AcquiredImage or nullptr for the default handler.
+     * @param callback   This is triggered by Filament when it wishes to release the image.
+     *                   It callback tales two arguments: the AHardwareBuffer and the userdata.
+     * @param userdata   Optional closure data. Filament will pass this into the callback when it
+     *                   releases the image.
+     */
+    void setAcquiredImage(void* image, backend::CallbackHandler* handler, Callback callback, void* userdata) noexcept;
 
     /**
      * Updates the size of the incoming stream. Whether this value is used is

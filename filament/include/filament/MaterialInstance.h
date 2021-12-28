@@ -20,6 +20,8 @@
 #include <filament/FilamentAPI.h>
 #include <filament/Color.h>
 
+#include <filament/MaterialEnums.h>
+
 #include <backend/DriverEnums.h>
 
 #include <utils/compiler.h>
@@ -37,6 +39,7 @@ class UniformInterfaceBlock;
 class UTILS_PUBLIC MaterialInstance : public FilamentAPI {
 public:
     using CullingMode = filament::backend::CullingMode;
+    using TransparencyMode = filament::TransparencyMode;
 
     template<typename T>
     using is_supported_parameter_t = typename std::enable_if<
@@ -60,6 +63,17 @@ public:
             std::is_same<math::bool4, T>::value ||
             std::is_same<math::mat3f, T>::value
     >::type;
+
+    /**
+     * Creates a new MaterialInstance using another MaterialInstance as a template for initialization.
+     * The new MaterialInstance is an instance of the same Material of the template instance and
+     * must be destroyed just like any other MaterialInstance.
+     *
+     * @param other A MaterialInstance to use as a template for initializing a new instance
+     * @param name  A name for the new MaterialInstance or nullptr to use the template's name
+     * @return      A new MaterialInstance
+     */
+    static MaterialInstance* duplicate(MaterialInstance const* other, const char* name = nullptr) noexcept;
 
     /**
      * @return the Material associated with this instance
@@ -185,6 +199,11 @@ public:
      * automatically disabled.
      */
     void setDoubleSided(bool doubleSided) noexcept;
+
+    /**
+     * Specifies how transparent objects should be rendered (default is DEFAULT).
+     */
+    void setTransparencyMode(TransparencyMode mode) noexcept;
 
     /**
      * Overrides the default triangle culling state that was set on the material.

@@ -18,40 +18,42 @@
 #define TNT_FILAMENT_DETAILS_ENGINE_H
 
 #include "upcast.h"
+
+#include "Allocators.h"
 #include "PostProcessManager.h"
+#include "ResourceList.h"
 
 #include "components/CameraManager.h"
 #include "components/LightManager.h"
 #include "components/TransformManager.h"
 #include "components/RenderableManager.h"
 
-#include "details/Allocators.h"
+#include "details/BufferObject.h"
 #include "details/Camera.h"
+#include "details/ColorGrading.h"
 #include "details/DebugRegistry.h"
 #include "details/Fence.h"
 #include "details/IndexBuffer.h"
 #include "details/RenderTarget.h"
-#include "details/ResourceList.h"
-#include "details/ColorGrading.h"
+#include "details/SkinningBuffer.h"
 #include "details/Skybox.h"
 
-#include "private/backend/CommandStream.h"
 #include "private/backend/CommandBufferQueue.h"
+#include "private/backend/CommandStream.h"
 #include "private/backend/DriverApi.h"
 
 #include <private/filament/EngineEnums.h>
 #include <private/filament/UniformInterfaceBlock.h>
 
+#include <filament/ColorGrading.h>
 #include <filament/Engine.h>
-#include <filament/VertexBuffer.h>
 #include <filament/IndirectLight.h>
 #include <filament/Material.h>
 #include <filament/MaterialEnums.h>
-#include <filament/Texture.h>
-#include <filament/ColorGrading.h>
 #include <filament/Skybox.h>
-
 #include <filament/Stream.h>
+#include <filament/Texture.h>
+#include <filament/VertexBuffer.h>
 
 #if FILAMENT_ENABLE_MATDBG
 #include <matdbg/DebugServer.h>
@@ -59,6 +61,7 @@
 namespace filament {
 namespace matdbg {
 class DebugServer;
+using MaterialKey = uint32_t;
 } // namespace matdbg
 } // namespace filament
 #endif
@@ -208,6 +211,10 @@ public:
         return mBackend;
     }
 
+    Platform* getPlatform() const noexcept {
+        return mPlatform;
+    }
+
     ResourceAllocator& getResourceAllocator() noexcept {
         assert_invariant(mResourceAllocator);
         return *mResourceAllocator;
@@ -223,8 +230,10 @@ public:
     template <typename T>
     T* create(ResourceList<T>& list, typename T::Builder const& builder) noexcept;
 
+    FBufferObject* createBufferObject(const BufferObject::Builder& builder) noexcept;
     FVertexBuffer* createVertexBuffer(const VertexBuffer::Builder& builder) noexcept;
     FIndexBuffer* createIndexBuffer(const IndexBuffer::Builder& builder) noexcept;
+    FSkinningBuffer* createSkinningBuffer(const SkinningBuffer::Builder& builder) noexcept;
     FIndirectLight* createIndirectLight(const IndirectLight::Builder& builder) noexcept;
     FMaterial* createMaterial(const Material::Builder& builder) noexcept;
     FTexture* createTexture(const Texture::Builder& builder) noexcept;
@@ -237,7 +246,8 @@ public:
     void createLight(const LightManager::Builder& builder, utils::Entity entity);
 
     FRenderer* createRenderer() noexcept;
-    FMaterialInstance* createMaterialInstance(const FMaterial* material, const char* name) noexcept;
+    FMaterialInstance* createMaterialInstance(const FMaterial* material,
+            const FMaterialInstance* other, const char* name) noexcept;
 
     FScene* createScene() noexcept;
     FView* createView() noexcept;
@@ -250,9 +260,11 @@ public:
     void destroyCameraComponent(utils::Entity entity) noexcept;
 
 
+    bool destroy(const FBufferObject* p);
     bool destroy(const FVertexBuffer* p);
     bool destroy(const FFence* p);
     bool destroy(const FIndexBuffer* p);
+    bool destroy(const FSkinningBuffer* p);
     bool destroy(const FIndirectLight* p);
     bool destroy(const FMaterial* p);
     bool destroy(const FMaterialInstance* p);
@@ -272,6 +284,17 @@ public:
 
     // flush the current buffer
     void flush();
+
+    // flush the current buffer based on some heuristics
+    void flushIfNeeded() {
+        auto counter = mFlushCounter + 1;
+        if (UTILS_LIKELY(counter < 128)) {
+            mFlushCounter = counter;
+        } else {
+            mFlushCounter = 0;
+            flush();
+        }
+    }
 
     /**
      * Processes the platform's event queue when called from the platform's event-handling thread.
@@ -304,6 +327,10 @@ public:
 
     std::default_random_engine& getRandomEngine() {
         return mRandomEngine;
+    }
+
+    void pumpMessageQueues() {
+        getDriver().purge();
     }
 
 private:
@@ -340,6 +367,7 @@ private:
     FCameraManager mCameraManager;
     ResourceAllocator* mResourceAllocator = nullptr;
 
+    ResourceList<FBufferObject> mBufferObjects{ "BufferObject" };
     ResourceList<FRenderer> mRenderers{ "Renderer" };
     ResourceList<FView> mViews{ "View" };
     ResourceList<FScene> mScenes{ "Scene" };
@@ -347,6 +375,7 @@ private:
     ResourceList<FSwapChain> mSwapChains{ "SwapChain" };
     ResourceList<FStream> mStreams{ "Stream" };
     ResourceList<FIndexBuffer> mIndexBuffers{ "IndexBuffer" };
+    ResourceList<FSkinningBuffer> mSkinningBuffers{ "SkinningBuffer" };
     ResourceList<FVertexBuffer> mVertexBuffers{ "VertexBuffer" };
     ResourceList<FIndirectLight> mIndirectLights{ "IndirectLight" };
     ResourceList<FMaterial> mMaterials{ "Material" };
@@ -365,11 +394,13 @@ private:
     std::thread mDriverThread;
     backend::CommandBufferQueue mCommandBufferQueue;
     DriverApi mCommandStream;
+    uint32_t mFlushCounter = 0;
 
     LinearAllocatorArena mPerRenderPassAllocator;
     HeapAllocatorArena mHeapAllocator;
 
     utils::JobSystem mJobSystem;
+    static uint32_t getJobSystemThreadPoolSize() noexcept;
 
     std::default_random_engine mRandomEngine;
 
@@ -397,7 +428,6 @@ public:
         struct {
             bool far_uses_shadowcasters = true;
             bool focus_shadowcasters = true;
-            bool checkerboard = false;
             bool lispsm = true;
             bool visualize_cascades = false;
             bool tightly_bound_scene = true;
@@ -406,9 +436,18 @@ public:
         } shadowmap;
         struct {
             bool enabled = true;
+            int sampleCount = 7;
+            int spiralTurns = 1;
+            int kernelSize = 23;
+            float stddev = 8.0f;
         } ssao;
         struct {
             bool camera_at_origin = true;
+            struct {
+                float kp = 0.0f;
+                float ki = 0.0f;
+                float kd = 0.0f;
+            } pid;
         } view;
         struct {
             // When set to true, the backend will attempt to capture the next frame and write the

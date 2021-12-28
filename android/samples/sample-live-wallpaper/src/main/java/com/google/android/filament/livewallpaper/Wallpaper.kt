@@ -18,18 +18,20 @@ package com.google.android.filament.livewallpaper
 
 import android.animation.ValueAnimator
 import android.app.Service
+import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.os.Build
 import android.service.wallpaper.WallpaperService
 import android.view.Choreographer
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
+import androidx.annotation.RequiresApi
 import com.google.android.filament.*
 import com.google.android.filament.android.DisplayHelper
 import com.google.android.filament.android.UiHelper
-
 
 class FilamentLiveWallpaper : WallpaperService() {
     // Make sure to initialize Filament first
@@ -101,7 +103,7 @@ class FilamentLiveWallpaper : WallpaperService() {
             renderer = engine.createRenderer()
             scene = engine.createScene()
             view = engine.createView()
-            camera = engine.createCamera()
+            camera = engine.createCamera(engine.entityManager.create())
         }
 
         private fun setupView() {
@@ -167,7 +169,8 @@ class FilamentLiveWallpaper : WallpaperService() {
             engine.destroyRenderer(renderer)
             engine.destroyView(view)
             engine.destroyScene(scene)
-            engine.destroyCamera(camera)
+            engine.destroyCameraComponent(camera.entity)
+            EntityManager.get().destroy(camera.entity)
 
             // Destroying the engine will free up any resource you may have forgotten
             // to destroy, but it's recommended to do the cleanup properly
@@ -195,9 +198,14 @@ class FilamentLiveWallpaper : WallpaperService() {
             override fun onNativeWindowChanged(surface: Surface) {
                 swapChain?.let { engine.destroySwapChain(it) }
                 swapChain = engine.createSwapChain(surface)
-                val display =
-                        (application.getSystemService(Service.WINDOW_SERVICE) as WindowManager)
-                        .defaultDisplay
+
+                @Suppress("deprecation")
+                val display = if (Build.VERSION.SDK_INT >= 30) {
+                    Api30Impl.getDisplay(displayContext!!)
+                } else {
+                    (getSystemService(Service.WINDOW_SERVICE) as WindowManager).defaultDisplay
+                }
+
                 displayHelper.attach(renderer, display)
             }
 
@@ -219,6 +227,13 @@ class FilamentLiveWallpaper : WallpaperService() {
 
                 view.viewport = Viewport(0, 0, width, height)
             }
+        }
+    }
+
+    @RequiresApi(30)
+    class Api30Impl {
+        companion object {
+            fun getDisplay(context: Context) = context.display!!
         }
     }
 }

@@ -59,6 +59,10 @@ import static com.google.android.filament.Colors.LinearColor;
  * @see RenderTarget
  */
 public class View {
+    private static final AntiAliasing[] sAntiAliasingValues = AntiAliasing.values();
+    private static final Dithering[] sDitheringValues = Dithering.values();
+    private static final AmbientOcclusion[] sAmbientOcclusionValues = AmbientOcclusion.values();
+
     private long mNativeObject;
     private String mName;
     private Scene mScene;
@@ -75,6 +79,7 @@ public class View {
     private VignetteOptions mVignetteOptions;
     private ColorGrading mColorGrading;
     private TemporalAntiAliasingOptions mTemporalAntiAliasingOptions;
+    private MultiSampleAntiAliasingOptions mMultiSampleAntiAliasingOptions;
     private VsmShadowOptions mVsmShadowOptions;
 
     /**
@@ -131,8 +136,20 @@ public class View {
         public float maxScale = 1.0f;
 
         /**
-         * Upscaling quality. LOW: 1 bilinear tap, MEDIUM: 4 bilinear taps, HIGH: 9 bilinear taps.
-         * If minScale needs to be very low, it might help to use MEDIUM or HIGH here.
+         * Sharpness when QualityLevel.MEDIUM or higher is used [0, 1].
+         * 0 is disabled, 1 is the sharpest setting.
+         * The default is set to 0.9
+         */
+        public float sharpness = 0.9f;
+
+        /**
+         * Upscaling quality
+         * LOW: bilinear filtered blit. Fastest, poor quality
+         * MEDIUM: AMD FidelityFX FSR1 w/ mobile optimizations no RCAS sharpening pass
+         * HIGH:   AMD FidelityFX FSR1 w/ mobile optimizations + RCAS
+         * ULTRA:  AMD FidelityFX FSR1
+         *      FSR1 require a well anti-aliased (MSAA or TAA), noise free scene.
+         *
          * The default upscaling quality is set to LOW.
          */
         @NonNull
@@ -170,6 +187,16 @@ public class View {
         public float intensity = 1.0f;
 
         /**
+         * Depth distance that constitute an edge for filtering. Must be positive.
+         * Default is 5cm.
+         * This must be adjusted with the scene's scale and/or units.
+         * A value too low will result in high frequency noise, while a value too high will
+         * result in the loss of geometry edges. For AO, it is generally better to be too
+         * blurry than not enough.
+         */
+        public float bilateralThreshold = 0.05f;
+
+        /**
          * The quality setting controls the number of samples used for evaluating Ambient
          * occlusion. The default is QualityLevel.LOW which is sufficient for most mobile
          * applications.
@@ -197,6 +224,11 @@ public class View {
          * enable or disable screen space ambient occlusion
          */
         public boolean enabled = false;
+
+        /**
+         * enables bent normals computation from AO, and specular AO
+         */
+        public boolean bentNormals = false;
 
         /**
          * Minimal angle to consider in radian. This is used to reduce the creases that can
@@ -265,8 +297,31 @@ public class View {
     }
 
     /**
+     * Options for Multi-sample Anti-aliasing (MSAA)
+     * @see View#setMultiSampleAntiAliasingOptions
+     */
+    public static class MultiSampleAntiAliasingOptions {
+        /** enables or disables temporal anti-aliasing */
+        public boolean enabled = false;
+
+        /**
+         * number of samples to use for multi-sampled anti-aliasing.\n
+         *      0: treated as 1
+         *      1: no anti-aliasing
+         *      n: sample count. Effective sample could be different depending on the
+         *         GPU capabilities.
+         */
+        public int sampleCount = 4;
+
+        /**
+         * custom resolve improves quality for HDR scenes, but may impact performance.
+         */
+        public boolean customResolve = false;
+    };
+
+    /**
      * Options for Temporal Anti-aliasing (TAA)
-     * @see View#setTemporalAntiAliasingOptions()
+     * @see View#setTemporalAntiAliasingOptions
      */
     public static class TemporalAntiAliasingOptions {
         /** reconstruction filter width typically between 0 (sharper, aliased) and 1 (smoother) */
@@ -284,11 +339,11 @@ public class View {
      *
      * enabled:     Enable or disable the bloom post-processing effect. Disabled by default.
      * levels:      Number of successive blurs to achieve the blur effect, the minimum is 3 and the
-     *              maximum is 12. This value together with resolution influences the spread of the
+     *              maximum is 11. This value together with resolution influences the spread of the
      *              blur effect. This value can be silently reduced to accommodate the original
      *              image size.
-     * resolution:  Resolution of bloom's minor axis. The minimum value is 2^levels and the
-     *              the maximum is lower of the original resolution and 4096. This parameter is
+     * resolution:  Resolution of bloom's vertical axis. The minimum value is 2^levels and the
+     *              the maximum is lower of the original resolution and 2048. This parameter is
      *              silently clamped to the minimum and maximum.
      *              It is highly recommended that this value be smaller than the target resolution
      *              after dynamic resolution is applied (horizontally and vertically).
@@ -329,7 +384,7 @@ public class View {
         public float strength = 0.10f;
 
         /**
-         * Resolution of minor axis (2^levels to 4096)
+         * Resolution of minor axis (2^levels to 2048)
          */
         public int resolution = 360;
 
@@ -339,7 +394,7 @@ public class View {
         public float anamorphism = 1.0f;
 
         /**
-         * Number of blur levels (3 to 12)
+         * Number of blur levels (3 to 11)
          */
         public int levels = 6;
 
@@ -363,6 +418,52 @@ public class View {
          * minimum value is 10.0.
          */
         public float highlight = 1000.0f;
+
+
+        /**
+         * enable screen-space lens flare
+         */
+        public boolean lensFlare = false;
+
+        /**
+         * enable starburst effect on lens flare
+         */
+        public boolean starburst = true;
+
+        /**
+         * amount of chromatic aberration
+         */
+        public float chromaticAberration = 0.005f;
+
+        /**
+         * number of flare "ghosts"
+         */
+        public int ghostCount = 4;
+
+        /**
+         * spacing of the ghost in screen units [0, 1[
+         */
+        public float ghostSpacing = 0.6f;
+
+        /**
+         * hdr threshold for the ghosts
+         */
+        public float ghostThreshold = 10.0f;
+
+        /**
+         * thickness of halo in vertical screen units, 0 to disable
+         */
+        public float haloThickness = 0.1f;
+
+        /**
+         * radius of halo in vertical screen units [0, 0.5]
+         */
+        public float haloRadius = 0.4f;
+
+        /**
+         * hdr threshold for the halo
+         */
+        public float haloThreshold = 10.0f;
     }
 
     /**
@@ -437,14 +538,6 @@ public class View {
         }
 
         /**
-         * focus distance in world units
-         *
-         * @deprecated use {@link Camera#setFocusDistance(float)}
-         */
-        @Deprecated
-        public float focusDistance = 10.0f;
-
-        /**
          * circle of confusion scale factor (amount of blur)
          *
          * <p>cocScale can be used to set the depth of field blur independently from the camera
@@ -465,6 +558,55 @@ public class View {
         /** filter to use for filling gaps in the kernel */
         @NonNull
         public Filter filter = Filter.MEDIAN;
+
+        /** perform DoF processing at native resolution */
+        public boolean nativeResolution = false;
+
+        /**
+         * <p>Number of of rings used by the foreground kernel. The number of rings affects quality
+         * and performance. The actual number of sample per pixel is defined
+         * as (ringCount * 2 - 1)^2. Here are a few commonly used values:</p>
+         *       3 rings :   25 ( 5x 5 grid)
+         *       4 rings :   49 ( 7x 7 grid)
+         *       5 rings :   81 ( 9x 9 grid)
+         *      17 rings : 1089 (33x33 grid)
+         *
+         * <p>With a maximum circle-of-confusion of 32, it is never necessary to use more than 17 rings.</p>
+         *
+         * <p>Usually all three settings below are set to the same value, however, it is often
+         * acceptable to use a lower ring count for the "fast tiles", which improves performance.
+         * Fast tiles are regions of the screen where every pixels have a similar
+         * circle-of-confusion radius.</p>
+         *
+         * <p>A value of 0 means default, which is 5 on desktop and 3 on mobile.</p>
+         */
+        public int foregroundRingCount = 0;
+
+        /**
+         * Number of of rings used by the background kernel. The number of rings affects quality
+         * and performance.
+         * @see #foregroundRingCount
+         */
+        public int backgroundRingCount = 0;
+
+        /**
+         * Number of of rings used by the fast gather kernel. The number of rings affects quality
+         * and performance.
+         * @see #foregroundRingCount
+         */
+        public int fastGatherRingCount = 0;
+
+        /**
+         * maximum circle-of-confusion in pixels for the foreground, must be in [0, 32] range.
+         * A value of 0 means default, which is 32 on desktop and 24 on mobile.
+         */
+        public int maxForegroundCOC = 0;
+
+        /**
+         * maximum circle-of-confusion in pixels for the background, must be in [0, 32] range.
+         * A value of 0 means default, which is 32 on desktop and 24 on mobile.
+         */
+        public int maxBackgroundCOC = 0;
     };
 
     /**
@@ -594,11 +736,18 @@ public class View {
         /**
          * Variance shadows.
          */
-        VSM
+        VSM,
+
+        /**
+         * Percentage-closer filtered shadows, with contact hardening simulation.
+         */
+        DPCF
     }
 
     /**
      * View-level options for VSM shadowing.
+     *
+     * <strong>Warning: This API is still experimental and subject to change.</strong>
      *
      * @see View#setVsmShadowOptions
      */
@@ -606,14 +755,29 @@ public class View {
         /**
          * Sets the number of anisotropic samples to use when sampling a VSM shadow map. If greater
          * than 0, mipmaps will automatically be generated each frame for all lights.
+         * This implies mipmapping below.
          *
          * <p>
          * The number of anisotropic samples = 2 ^ vsmAnisotropy.
          * </p>
          *
-         * <strong>Warning: This API is still experimental and subject to change.</strong>
          */
         public int anisotropy = 0;
+
+        /**
+         * Whether to generate mipmaps for all VSM shadow maps.
+         */
+        public boolean mipmapping = false;
+
+        /**
+         * VSM minimum variance scale, must be positive.
+         */
+        public float minVarianceScale = 1.0f;
+
+        /**
+         * VSM light bleeding reduction amount, between 0 and 1.
+         */
+        public float lightBleedReduction = 0.2f;
     }
 
     /**
@@ -845,16 +1009,6 @@ public class View {
     }
 
     /**
-     * Enables or disables shadow mapping. Enabled by default.
-     *
-     * @deprecated Use {@link #setShadowingEnabled}
-     */
-    @Deprecated
-    public void setShadowsEnabled(boolean enabled) {
-        setShadowingEnabled(enabled);
-    }
-
-    /**
      * @return whether shadowing is enabled
      */
     boolean isShadowingEnabled() {
@@ -919,7 +1073,10 @@ public class View {
      * </p>
      *
      * @param count number of samples to use for multi-sampled anti-aliasing.
+     *
+     * @deprecated use setMultiSampleAntiAliasingOptions instead
      */
+    @Deprecated
     public void setSampleCount(int count) {
         nSetSampleCount(getNativeObject(), count);
     }
@@ -932,7 +1089,10 @@ public class View {
      * </p>
      *
      * @return value set by {@link #setSampleCount}
+     *
+     * @deprecated use getMultiSampleAntiAliasingOptions instead
      */
+    @Deprecated
     public int getSampleCount() {
         return nGetSampleCount(getNativeObject());
     }
@@ -958,7 +1118,31 @@ public class View {
      */
     @NonNull
     public AntiAliasing getAntiAliasing() {
-        return AntiAliasing.values()[nGetAntiAliasing(getNativeObject())];
+        return sAntiAliasingValues[nGetAntiAliasing(getNativeObject())];
+    }
+
+    /**
+     * Enables or disable multi-sample anti-aliasing (MSAA). Disabled by default.
+     *
+     * @param options multi-sample anti-aliasing options
+     */
+    public void setMultiSampleAntiAliasingOptions(@NonNull MultiSampleAntiAliasingOptions options) {
+        mMultiSampleAntiAliasingOptions = options;
+        nSetMultiSampleAntiAliasingOptions(getNativeObject(),
+                options.enabled, options.sampleCount, options.customResolve);
+    }
+
+    /**
+     * Returns multi-sample anti-aliasing options.
+     *
+     * @return multi-sample anti-aliasing options
+     */
+    @NonNull
+    public MultiSampleAntiAliasingOptions getMultiSampleAntiAliasingOptions() {
+        if (mMultiSampleAntiAliasingOptions == null) {
+            mMultiSampleAntiAliasingOptions = new MultiSampleAntiAliasingOptions();
+        }
+        return mMultiSampleAntiAliasingOptions;
     }
 
     /**
@@ -1047,7 +1231,7 @@ public class View {
      */
     @NonNull
     public Dithering getDithering() {
-        return Dithering.values()[nGetDithering(getNativeObject())];
+        return sDitheringValues[nGetDithering(getNativeObject())];
     }
 
     /**
@@ -1072,6 +1256,7 @@ public class View {
                 options.homogeneousScaling,
                 options.minScale,
                 options.maxScale,
+                options.sharpness,
                 options.quality.ordinal());
     }
 
@@ -1231,7 +1416,8 @@ public class View {
      */
     public void setVsmShadowOptions(@NonNull VsmShadowOptions options) {
         mVsmShadowOptions = options;
-        nSetVsmShadowOptions(getNativeObject(), options.anisotropy);
+        nSetVsmShadowOptions(getNativeObject(), options.anisotropy, options.mipmapping,
+                options.minVarianceScale, options.lightBleedReduction);
     }
 
     /**
@@ -1265,7 +1451,7 @@ public class View {
     @Deprecated
     @NonNull
     public AmbientOcclusion getAmbientOcclusion() {
-        return AmbientOcclusion.values()[nGetAmbientOcclusion(getNativeObject())];
+        return sAmbientOcclusionValues[nGetAmbientOcclusion(getNativeObject())];
     }
 
     /**
@@ -1276,9 +1462,11 @@ public class View {
     public void setAmbientOcclusionOptions(@NonNull AmbientOcclusionOptions options) {
         mAmbientOcclusionOptions = options;
         nSetAmbientOcclusionOptions(getNativeObject(), options.radius, options.bias, options.power,
-                options.resolution, options.intensity, options.quality.ordinal(), options.lowPassFilter.ordinal(), options.upsampling.ordinal(),
-                options.enabled, options.minHorizonAngleRad);
-        nSetSSCTOptions(getNativeObject(), options.ssctLightConeRad, options.ssctStartTraceDistance, options.ssctContactDistanceMax,  options.ssctIntensity,
+                options.resolution, options.intensity, options.bilateralThreshold,
+                options.quality.ordinal(), options.lowPassFilter.ordinal(), options.upsampling.ordinal(),
+                options.enabled, options.bentNormals, options.minHorizonAngleRad);
+        nSetSSCTOptions(getNativeObject(), options.ssctLightConeRad, options.ssctStartTraceDistance,
+                options.ssctContactDistanceMax,  options.ssctIntensity,
                 options.ssctLightDirection[0], options.ssctLightDirection[1], options.ssctLightDirection[2],
                 options.ssctDepthBias, options.ssctDepthSlopeBias, options.ssctSampleCount,
                 options.ssctRayCount, options.ssctEnabled);
@@ -1308,7 +1496,10 @@ public class View {
         nSetBloomOptions(getNativeObject(), options.dirt != null ? options.dirt.getNativeObject() : 0,
                 options.dirtStrength, options.strength, options.resolution,
                 options.anamorphism, options.levels, options.blendingMode.ordinal(),
-                options.threshold, options.enabled, options.highlight);
+                options.threshold, options.enabled, options.highlight,
+                options.lensFlare, options.starburst, options.chromaticAberration,
+                options.ghostCount, options.ghostSpacing, options.ghostThreshold,
+                options.haloThickness, options.haloRadius, options.haloThreshold);
     }
 
     /**
@@ -1393,7 +1584,10 @@ public class View {
      */
     public void setDepthOfFieldOptions(@NonNull DepthOfFieldOptions options) {
         mDepthOfFieldOptions = options;
-        nSetDepthOfFieldOptions(getNativeObject(), options.focusDistance, options.cocScale, options.maxApertureDiameter, options.enabled, options.filter.ordinal());
+        nSetDepthOfFieldOptions(getNativeObject(), options.cocScale,
+                options.maxApertureDiameter, options.enabled, options.filter.ordinal(),
+                options.nativeResolution, options.foregroundRingCount, options.backgroundRingCount,
+                options.fastGatherRingCount, options.maxForegroundCOC, options.maxBackgroundCOC);
     }
 
     /**
@@ -1410,6 +1604,71 @@ public class View {
         return mDepthOfFieldOptions;
     }
 
+    /**
+     * A class containing the result of a picking query
+     */
+    public static class PickingQueryResult {
+        /** The entity of the renderable at the picking query location */
+        @Entity public int renderable;
+        /** The value of the depth buffer at the picking query location */
+        public float depth;
+        /** The fragment coordinate in GL convention at the picking query location */
+        @NonNull public float[] fragCoords = new float[3];
+    };
+
+    /**
+     * An interface to implement a custom class to receive results of picking queries.
+     */
+    public interface OnPickCallback {
+        /**
+         * onPick() is called by the specified Handler in {@link View#pick} when the picking query
+         * result is available.
+         * @param result An instance of {@link PickingQueryResult}.
+         */
+        void onPick(@NonNull PickingQueryResult result);
+    }
+
+    /**
+     * Creates a picking query. Multiple queries can be created (e.g.: multi-touch).
+     * Picking queries are all executed when {@link Renderer#render} is called on this View.
+     * The provided callback is guaranteed to be called at some point in the future.
+     *
+     * Typically it takes a couple frames to receive the result of a picking query.
+     *
+     * @param x        Horizontal coordinate to query in the viewport with origin on the left.
+     * @param y        Vertical coordinate to query on the viewport with origin at the bottom.
+     * @param handler  An {@link java.util.concurrent.Executor Executor}.
+     *                 On Android this can also be a {@link android.os.Handler Handler}.
+     * @param callback User callback executed by <code>handler</code> when the picking query
+     *                 result is available.
+     */
+    public void pick(int x, int y,
+            @Nullable Object handler, @Nullable OnPickCallback callback) {
+        InternalOnPickCallback internalCallback = new InternalOnPickCallback(callback);
+        nPick(getNativeObject(), x, y, handler, internalCallback);
+    }
+
+    private static class InternalOnPickCallback implements Runnable {
+        public InternalOnPickCallback(OnPickCallback mUserCallback) {
+            this.mUserCallback = mUserCallback;
+        }
+        @Override
+        public void run() {
+            mPickingQueryResult.renderable = mRenderable;
+            mPickingQueryResult.depth = mDepth;
+            mPickingQueryResult.fragCoords[0] = mFragCoordsX;
+            mPickingQueryResult.fragCoords[1] = mFragCoordsY;
+            mPickingQueryResult.fragCoords[2] = mFragCoordsZ;
+            mUserCallback.onPick(mPickingQueryResult);
+        }
+        private final OnPickCallback mUserCallback;
+        private final PickingQueryResult mPickingQueryResult = new PickingQueryResult();
+        @Entity int mRenderable;
+        float mDepth;
+        float mFragCoordsX;
+        float mFragCoordsY;
+        float mFragCoordsZ;
+    }
 
     public long getNativeObject() {
         if (mNativeObject == 0) {
@@ -1435,11 +1694,11 @@ public class View {
     private static native int nGetAntiAliasing(long nativeView);
     private static native void nSetDithering(long nativeView, int dithering);
     private static native int nGetDithering(long nativeView);
-    private static native void nSetDynamicResolutionOptions(long nativeView, boolean enabled, boolean homogeneousScaling, float minScale, float maxScale, int quality);
+    private static native void nSetDynamicResolutionOptions(long nativeView, boolean enabled, boolean homogeneousScaling, float minScale, float maxScale, float sharpness, int quality);
     private static native void nSetRenderQuality(long nativeView, int hdrColorBufferQuality);
     private static native void nSetDynamicLightingOptions(long nativeView, float zLightNear, float zLightFar);
     private static native void nSetShadowType(long nativeView, int type);
-    private static native void nSetVsmShadowOptions(long nativeView, int anisotropy);
+    private static native void nSetVsmShadowOptions(long nativeView, int anisotropy, boolean mipmapping, float minVarianceScale, float lightBleedReduction);
     private static native void nSetColorGrading(long nativeView, long nativeColorGrading);
     private static native void nSetPostProcessingEnabled(long nativeView, boolean enabled);
     private static native boolean nIsPostProcessingEnabled(long nativeView);
@@ -1447,15 +1706,19 @@ public class View {
     private static native boolean nIsFrontFaceWindingInverted(long nativeView);
     private static native void nSetAmbientOcclusion(long nativeView, int ordinal);
     private static native int nGetAmbientOcclusion(long nativeView);
-    private static native void nSetAmbientOcclusionOptions(long nativeView, float radius, float bias, float power, float resolution, float intensity, int quality, int lowPassFilter, int upsampling, boolean enabled, float minHorizonAngleRad);
+    private static native void nSetAmbientOcclusionOptions(long nativeView, float radius, float bias, float power, float resolution, float intensity, float bilateralThreshold, int quality, int lowPassFilter, int upsampling, boolean enabled, boolean bentNormals, float minHorizonAngleRad);
     private static native void nSetSSCTOptions(long nativeView, float ssctLightConeRad, float ssctStartTraceDistance, float ssctContactDistanceMax, float ssctIntensity, float v, float v1, float v2, float ssctDepthBias, float ssctDepthSlopeBias, int ssctSampleCount, int ssctRayCount, boolean ssctEnabled);
-    private static native void nSetBloomOptions(long nativeView, long dirtNativeObject, float dirtStrength, float strength, int resolution, float anamorphism, int levels, int blendMode, boolean threshold, boolean enabled, float highlight);
+    private static native void nSetBloomOptions(long nativeView, long dirtNativeObject, float dirtStrength, float strength, int resolution, float anamorphism, int levels, int blendMode, boolean threshold, boolean enabled, float highlight,
+            boolean lensFlare, boolean starburst, float chromaticAberration, int ghostCount, float ghostSpacing, float ghostThreshold, float haloThickness, float haloRadius, float haloThreshold);
     private static native void nSetFogOptions(long nativeView, float distance, float maximumOpacity, float height, float heightFalloff, float v, float v1, float v2, float density, float inScatteringStart, float inScatteringSize, boolean fogColorFromIbl, boolean enabled);
     private static native void nSetBlendMode(long nativeView, int blendMode);
-    private static native void nSetDepthOfFieldOptions(long nativeView, float focusDistance, float cocScale, float maxApertureDiameter, boolean enabled, int filter);
+    private static native void nSetDepthOfFieldOptions(long nativeView, float cocScale, float maxApertureDiameter, boolean enabled, int filter,
+            boolean nativeResolution, int foregroundRingCount, int backgroundRingCount, int fastGatherRingCount, int maxForegroundCOC, int maxBackgroundCOC);
     private static native void nSetVignetteOptions(long nativeView, float midPoint, float roundness, float feather, float r, float g, float b, float a, boolean enabled);
     private static native void nSetTemporalAntiAliasingOptions(long nativeView, float feedback, float filterWidth, boolean enabled);
+    private static native void nSetMultiSampleAntiAliasingOptions(long nativeView, boolean enabled, int sampleCount, boolean customResolve);
     private static native boolean nIsShadowingEnabled(long nativeView);
     private static native void nSetScreenSpaceRefractionEnabled(long nativeView, boolean enabled);
     private static native boolean nIsScreenSpaceRefractionEnabled(long nativeView);
+    private static native void nPick(long nativeView, int x, int y, Object handler, InternalOnPickCallback internalCallback);
 }

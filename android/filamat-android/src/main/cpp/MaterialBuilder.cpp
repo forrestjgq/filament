@@ -123,19 +123,22 @@ Java_com_google_android_filament_filamat_MaterialBuilder_nMaterialBuilderInterpo
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_google_android_filament_filamat_MaterialBuilder_nMaterialBuilderUniformParameter(
-        JNIEnv* env, jclass, jlong nativeBuilder, jint uniformType, jstring name_) {
+        JNIEnv* env, jclass, jlong nativeBuilder, jint uniformType, jint precision, jstring name_) {
     auto builder = (MaterialBuilder*) nativeBuilder;
     const char* name = env->GetStringUTFChars(name_, nullptr);
-    builder->parameter((MaterialBuilder::UniformType) uniformType, name);
+    builder->parameter((MaterialBuilder::UniformType) uniformType,
+            (MaterialBuilder::ParameterPrecision) precision, name);
     env->ReleaseStringUTFChars(name_, name);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_google_android_filament_filamat_MaterialBuilder_nMaterialBuilderUniformParameterArray(
-        JNIEnv* env, jclass, jlong nativeBuilder, jint uniformType, jint size, jstring name_) {
+        JNIEnv* env, jclass, jlong nativeBuilder, jint uniformType, jint size, jint precision,
+        jstring name_) {
     auto builder = (MaterialBuilder*) nativeBuilder;
     const char* name = env->GetStringUTFChars(name_, nullptr);
-    builder->parameter((MaterialBuilder::UniformType) uniformType, (size_t) size, name);
+    builder->parameter((MaterialBuilder::UniformType) uniformType, (size_t) size,
+            (MaterialBuilder::ParameterPrecision) precision, name);
     env->ReleaseStringUTFChars(name_, name);
 }
 
@@ -146,7 +149,7 @@ Java_com_google_android_filament_filamat_MaterialBuilder_nMaterialBuilderSampler
     auto builder = (MaterialBuilder*) nativeBuilder;
     const char* name = env->GetStringUTFChars(name_, nullptr);
     builder->parameter((MaterialBuilder::SamplerType) samplerType,
-            (MaterialBuilder::SamplerFormat) format, (MaterialBuilder::SamplerPrecision) precision,
+            (MaterialBuilder::SamplerFormat) format, (MaterialBuilder::ParameterPrecision) precision,
             name);
     env->ReleaseStringUTFChars(name_, name);
 }
@@ -256,6 +259,13 @@ Java_com_google_android_filament_filamat_MaterialBuilder_nMaterialBuilderShadowM
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_google_android_filament_filamat_MaterialBuilder_nMaterialBuilderTransparentShadow(
+        JNIEnv*, jclass, jlong nativeBuilder, jboolean transparentShadow) {
+    auto builder = (MaterialBuilder*) nativeBuilder;
+    builder->transparentShadow(transparentShadow);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_google_android_filament_filamat_MaterialBuilder_nMaterialBuilderSpecularAntiAliasing(
         JNIEnv*, jclass, jlong nativeBuilder, jboolean specularAntiAliasing) {
     auto builder = (MaterialBuilder*) nativeBuilder;
@@ -289,6 +299,13 @@ Java_com_google_android_filament_filamat_MaterialBuilder_nMaterialBuilderFlipUV(
         jclass, jlong nativeBuilder, jboolean flipUV) {
     auto builder = (MaterialBuilder*) nativeBuilder;
     builder->flipUV(flipUV);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_google_android_filament_filamat_MaterialBuilder_nMaterialBuilderCustomSurfaceShading(JNIEnv*,
+        jclass, jlong nativeBuilder, jboolean customSurfaceShading) {
+    auto builder = (MaterialBuilder*) nativeBuilder;
+    builder->customSurfaceShading(customSurfaceShading);
 }
 
 extern "C" JNIEXPORT void JNICALL

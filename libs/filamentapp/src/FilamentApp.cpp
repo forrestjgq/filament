@@ -19,7 +19,9 @@
 #include <filamentapp/FilamentApp.h>
 
 #if !defined(WIN32)
-#    include <unistd.h>
+#if defined(FILAMENT_SUPPORTS_WAYLAND)
+#    include <SDL_syswm.h>
+#endif
 #else
 #    include <SDL_syswm.h>
 #    include <utils/unwindows.h>
@@ -453,16 +455,20 @@ void FilamentApp::loadIBL(const Config& config) {
             return;
         }
 
-        if (!iblPath.isDirectory()) {
-            std::cerr << "The specified IBL path is not a directory: " << iblPath << std::endl;
-            return;
-        }
-
         mIBL = std::make_unique<IBL>(*mEngine);
-        if (!mIBL->loadFromDirectory(iblPath)) {
-            std::cerr << "Could not load the specified IBL: " << iblPath << std::endl;
-            mIBL.reset(nullptr);
-            return;
+
+        if (!iblPath.isDirectory()) {
+            if (!mIBL->loadFromEquirect(iblPath)) {
+                std::cerr << "Could not load the specified IBL: " << iblPath << std::endl;
+                mIBL.reset(nullptr);
+                return;
+            }
+        } else {
+            if (!mIBL->loadFromDirectory(iblPath)) {
+                std::cerr << "Could not load the specified IBL: " << iblPath << std::endl;
+                mIBL.reset(nullptr);
+                return;
+            }
         }
     }
 }
@@ -518,8 +524,6 @@ FilamentApp::Window::Window(FilamentApp* filamentApp,
         windowFlags |= SDL_WINDOW_HIDDEN;
     }
 
-    mBackend = config.backend;
-
     // Even if we're in headless mode, we still need to create a window, otherwise SDL will not poll
     // events.
     mWindow = SDL_CreateWindow(title.c_str(), x, y, (int) w, (int) h, windowFlags);
@@ -530,15 +534,41 @@ FilamentApp::Window::Window(FilamentApp* filamentApp,
         mWidth = w;
         mHeight = h;
     } else {
+
+#if defined(FILAMENT_SUPPORTS_WAYLAND)
+        struct {
+            struct wl_display *display;
+            struct wl_surface *surface;
+        } wayland{};
+
+        SDL_SysWMinfo wmi;
+        SDL_VERSION(&wmi.version);
+        ASSERT_POSTCONDITION(SDL_GetWindowWMInfo(mWindow, &wmi), "SDL version unsupported!");
+        if (wmi.subsystem == SDL_SYSWM_WAYLAND) {
+            wayland.display = wmi.info.wl.display;
+            wayland.surface = wmi.info.wl.surface;
+        }
+        void* nativeWindow = &wayland;
+
+        // Create the Engine after the window in case this happens to be a single-threaded platform.
+        // For single-threaded platforms, we need to ensure that Filament's OpenGL context is
+        // current, rather than the one created by SDL.
+        mFilamentApp->mEngine = Engine::create(config.backend, nullptr, nativeWindow);
+#else
+        void* nativeWindow = ::getNativeWindow(mWindow);
+
         // Create the Engine after the window in case this happens to be a single-threaded platform.
         // For single-threaded platforms, we need to ensure that Filament's OpenGL context is
         // current, rather than the one created by SDL.
         mFilamentApp->mEngine = Engine::create(config.backend);
+#endif
+        // get the resolved backend
+        mBackend = config.backend = mFilamentApp->mEngine->getBackend();
 
-        void* nativeWindow = ::getNativeWindow(mWindow);
         void* nativeSwapChain = nativeWindow;
 
 #if defined(__APPLE__)
+        ::prepareNativeWindow(mWindow);
 
         void* metalLayer = nullptr;
         if (config.backend == filament::Engine::Backend::METAL) {

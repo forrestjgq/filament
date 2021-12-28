@@ -20,8 +20,11 @@
 
 #include "details/Texture.h"
 
+#include <utils/FixedCapacityVector.h>
 #include <utils/Log.h>
 #include <utils/debug.h>
+
+#include <iterator>
 
 using namespace utils;
 
@@ -75,6 +78,8 @@ size_t ResourceAllocator::TextureKey::getSize() const noexcept {
         // if we have mip-maps we assume the full pyramid
         size += size / 3;
     }
+    // TODO: this is not taking into account the potential sidecar MS buffer
+    //  but we have not way to know about its existence at this point.
     return size;
 }
 
@@ -109,9 +114,10 @@ void ResourceAllocator::destroyRenderTarget(RenderTargetHandle h) noexcept {
 }
 
 backend::TextureHandle ResourceAllocator::createTexture(const char* name,
-        backend::SamplerType target, uint8_t levels,
-        backend::TextureFormat format, uint8_t samples, uint32_t width, uint32_t height,
-        uint32_t depth, backend::TextureUsage usage) noexcept {
+        backend::SamplerType target, uint8_t levels, backend::TextureFormat format, uint8_t samples,
+        uint32_t width, uint32_t height, uint32_t depth,
+        std::array<backend::TextureSwizzle, 4> swizzle,
+        backend::TextureUsage usage) noexcept {
 
     // Some WebGL implementations complain about an incomplete framebuffer when the attachment sizes
     // are heterogeneous. This merits further investigation.
@@ -129,11 +135,15 @@ backend::TextureHandle ResourceAllocator::createTexture(const char* name,
     // backend should always be 1 or greater.
     samples = samples ? samples : uint8_t(1);
 
+    using TS = backend::TextureSwizzle;
+    constexpr const auto defaultSwizzle = std::array<backend::TextureSwizzle, 4>{
+        TS::CHANNEL_0, TS::CHANNEL_1, TS::CHANNEL_2, TS::CHANNEL_3};
+
     // do we have a suitable texture in the cache?
     TextureHandle handle;
-    if (mEnabled) {
+    if constexpr (mEnabled) {
         auto& textureCache = mTextureCache;
-        const TextureKey key{ name, target, levels, format, samples, width, height, depth, usage };
+        const TextureKey key{ name, target, levels, format, samples, width, height, depth, usage, swizzle };
         auto it = textureCache.find(key);
         if (UTILS_LIKELY(it != textureCache.end())) {
             // we do, move the entry to the in-use list, and remove from the cache
@@ -142,19 +152,31 @@ backend::TextureHandle ResourceAllocator::createTexture(const char* name,
             textureCache.erase(it);
         } else {
             // we don't, allocate a new texture and populate the in-use list
-            handle = mBackend.createTexture(
-                    target, levels, format, samples, width, height, depth, usage);
+            if (swizzle == defaultSwizzle) {
+                handle = mBackend.createTexture(
+                        target, levels, format, samples, width, height, depth, usage);
+            } else {
+                handle = mBackend.createTextureSwizzled(
+                        target, levels, format, samples, width, height, depth, usage,
+                        swizzle[0], swizzle[1], swizzle[2], swizzle[3]);
+            }
         }
         mInUseTextures.emplace(handle, key);
     } else {
-        handle = mBackend.createTexture(
-                target, levels, format, samples, width, height, depth, usage);
+        if (swizzle == defaultSwizzle) {
+            handle = mBackend.createTexture(
+                    target, levels, format, samples, width, height, depth, usage);
+        } else {
+            handle = mBackend.createTextureSwizzled(
+                    target, levels, format, samples, width, height, depth, usage,
+                    swizzle[0], swizzle[1], swizzle[2], swizzle[3]);
+        }
     }
     return handle;
 }
 
 void ResourceAllocator::destroyTexture(TextureHandle h) noexcept {
-    if (mEnabled) {
+    if constexpr (mEnabled) {
         // find the texture in the in-use list (it must be there!)
         auto it = mInUseTextures.find(h);
         assert_invariant(it != mInUseTextures.end());
@@ -201,12 +223,10 @@ void ResourceAllocator::gc() noexcept {
     }
 
     if (UTILS_UNLIKELY(mCacheSize >= CACHE_CAPACITY)) {
-        // make a copy of our cache to a vector
-        std::vector<std::pair<TextureKey, TextureCachePayload>> cache;
-        cache.reserve(textureCache.size());
-        for (auto const& item : textureCache) {
-            cache.push_back(item);
-        }
+        // make a copy of our CacheContainer to a vector
+        using Vector = FixedCapacityVector<std::pair<TextureKey, TextureCachePayload>>;
+        auto cache = Vector::with_capacity(textureCache.size());
+        std::copy(textureCache.begin(), textureCache.end(), std::back_insert_iterator<Vector>(cache));
 
         // sort by least recently used
         std::sort(cache.begin(), cache.end(), [](auto const& lhs, auto const& rhs) {

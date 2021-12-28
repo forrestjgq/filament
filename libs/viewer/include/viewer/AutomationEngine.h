@@ -50,7 +50,7 @@ namespace viewer {
  * waiting for a large model file to become fully loaded. Batch mode also offers a query
  * (shouldClose) that is triggered after the last test has been invoked.
  */
-class AutomationEngine {
+class UTILS_PUBLIC AutomationEngine {
 public:
     /**
      * Allows users to toggle screenshots, change the sleep duration between tests, etc.
@@ -82,6 +82,22 @@ public:
          * If true, the tick function writes out a settings JSON file before advancing.
          */
         bool exportSettings = false;
+    };
+
+    /**
+     * Collection of Filament objects that can be modified by the automation engine.
+     */
+    struct ViewerContent {
+        View* view;
+        Renderer* renderer;
+        MaterialInstance* const* materials;
+        size_t materialCount;
+        LightManager* lightManager;
+        Scene* scene;
+        IndirectLight* indirectLight;
+        utils::Entity sunlight;
+        utils::Entity* assetLights;
+        size_t assetLightCount;
     };
 
     /**
@@ -139,14 +155,10 @@ public:
      * This is when settings get applied, screenshots are (optionally) exported, and the internal
      * test counter is potentially incremented.
      *
-     * @param view          The Filament View that automation pushes changes to.
-     * @param materials     An optional set of of materials that can receive parameter tweaks.
-     * @param materialCount The number of items in the materials array.
-     * @param renderer      The Filament Renderer that can be used to take screenshots.
+     * @param content       Contains the Filament View, Materials, and Renderer that get modified.
      * @param deltaTime     The amount of time that has passed since the previous tick in seconds.
      */
-    void tick(View* view, MaterialInstance* const* materials, size_t materialCount,
-            Renderer* renderer, float deltaTime);
+    void tick(const ViewerContent& content, float deltaTime);
 
     /**
      * Mutates a set of client-owned Filament objects according to a JSON string.
@@ -156,10 +168,12 @@ public:
      *
      * This updates the stashed Settings object, then pushes those settings to the given
      * Filament objects. Clients can optionally call getColorGrading() after calling this method.
+     *
+     * @param json       Contains the JSON string with a set of changes that need to be pushed.
+     * @param jsonLength Number of characters in the json string.
+     * @param content    Contains a set of Filament objects that you want to mutate.
      */
-    void applySettings(const char* json, size_t jsonLength, View* view,
-            MaterialInstance* const* materials, size_t materialCount, IndirectLight* ibl,
-            utils::Entity sunlight, LightManager* lm, Scene* scene, Renderer* renderer);
+    void applySettings(const char* json, size_t jsonLength, const ViewerContent& content);
 
     /**
      * Gets a color grading object that corresponds to the latest settings.
@@ -168,6 +182,13 @@ public:
      * a new one.
      */
     ColorGrading* getColorGrading(Engine* engine);
+
+    /**
+     * Gets the current viewer options.
+     *
+     * NOTE: Focal length here might be different from the user-specified value, due to DoF options.
+     */
+    ViewerOptions getViewerOptions() const;
 
     /**
      * Signals that batch mode can begin. Call this after all meshes and textures finish loading.

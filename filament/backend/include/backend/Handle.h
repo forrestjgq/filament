@@ -14,16 +14,19 @@
  * limitations under the License.
  */
 
-#ifndef TNT_FILAMENT_DRIVER_HANDLE_H
-#define TNT_FILAMENT_DRIVER_HANDLE_H
+#ifndef TNT_FILAMENT_BACKEND_HANDLE_H
+#define TNT_FILAMENT_BACKEND_HANDLE_H
 
 #include <utils/compiler.h>
 #include <utils/Log.h>
 #include <utils/debug.h>
 
+#include <limits>
+
 namespace filament {
 namespace backend {
 
+struct HwBufferObject;
 struct HwFence;
 struct HwIndexBuffer;
 struct HwProgram;
@@ -35,7 +38,6 @@ struct HwSwapChain;
 struct HwSync;
 struct HwTexture;
 struct HwTimerQuery;
-struct HwUniformBuffer;
 struct HwVertexBuffer;
 
 /*
@@ -96,6 +98,7 @@ private:
 
 // Types used by the command stream
 // (we use this renaming because the macro-system doesn't deal well with "<" and ">")
+using BufferObjectHandle    = Handle<HwBufferObject>;
 using FenceHandle           = Handle<HwFence>;
 using IndexBufferHandle     = Handle<HwIndexBuffer>;
 using ProgramHandle         = Handle<HwProgram>;
@@ -107,10 +110,9 @@ using SwapChainHandle       = Handle<HwSwapChain>;
 using SyncHandle            = Handle<HwSync>;
 using TextureHandle         = Handle<HwTexture>;
 using TimerQueryHandle      = Handle<HwTimerQuery>;
-using UniformBufferHandle   = Handle<HwUniformBuffer>;
 using VertexBufferHandle    = Handle<HwVertexBuffer>;
 
 } // namespace backend
 } // namespace filament
 
-#endif // TNT_FILAMENT_DRIVER_HANDLE_H
+#endif // TNT_FILAMENT_BACKEND_HANDLE_H

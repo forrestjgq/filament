@@ -117,6 +117,8 @@ import androidx.annotation.Size;
  * </ul>
  */
 public class LightManager {
+    private static final Type[] sTypeValues = Type.values();
+
     private long mNativeObject;
 
     LightManager(long nativeLightManager) {
@@ -188,7 +190,7 @@ public class LightManager {
      * Control the quality / performance of the shadow map associated to this light
      */
     public static class ShadowOptions {
-        /** Size of the shadow map in texels. Must be a power-of-two. */
+        /** Size of the shadow map in texels. Must be a power-of-two and larger or equal to 8. */
         public int mapSize = 1024;
 
         /**
@@ -242,15 +244,17 @@ public class LightManager {
 
         /** Constant bias in world units (e.g. meters) by which shadows are moved away from the
          * light. 1mm by default.
+         * This is ignored when the View's ShadowType is set to VSM.
          */
-        public float constantBias = 0.05f;
+        public float constantBias = 0.001f;
 
         /** Amount by which the maximum sampling error is scaled. The resulting value is used
          * to move the shadow away from the fragment normal. Should be 1.0.
+         * This is ignored when the View's ShadowType is set to VSM.
          */
-        public float normalBias = 0.4f;
+        public float normalBias = 1.0f;
 
-        /** Distance from the camera after which shadows are clipped. this is used to clip
+        /** Distance from the camera after which shadows are clipped. This is used to clip
          * shadows that are too far and wouldn't contribute to the scene much, improving
          * performance and quality. This value is always positive.
          * Use 0.0f to use the camera far distance.
@@ -277,7 +281,24 @@ public class LightManager {
          * When set to true, all resolution enhancing features that can affect stability are
          * disabling, resulting in significantly lower resolution shadows, albeit stable ones.
          */
-        public boolean stable = true;
+        public boolean stable = false;
+
+        /**
+         * Constant bias in depth-resolution units by which shadows are moved away from the
+         * light. The default value of 0.5 is used to round depth values up.
+         * Generally this value shouldn't be changed or at least be small and positive.
+         * This is ignored when the View's ShadowType is set to VSM.
+         */
+        float polygonOffsetConstant = 0.5f;
+
+        /**
+         * Bias based on the change in depth in depth-resolution units by which shadows are moved
+         * away from the light. The default value of 2.0 works well with SHADOW_SAMPLING_PCF_LOW.
+         * Generally this value is between 0.5 and the size in texel of the PCF filter.
+         * Setting this value correctly is essential for LISPSM shadow-maps.
+         * This is ignored when the View's ShadowType is set to VSM.
+         */
+        float polygonOffsetSlope = 2.0f;
 
         /**
          * Whether screen-space contact shadows are used. This applies regardless of whether a
@@ -324,6 +345,18 @@ public class LightManager {
          */
         @IntRange(from = 1)
         public int vsmMsaaSamples = 1;
+
+        /**
+         * Blur width for the VSM blur. Zero do disable.
+         * The maximum value is 125.
+         */
+        public float blurWidth = 0.0f;
+
+        /**
+         * Light bulb radius used for soft shadows. Currently this is only used when DPCF is
+         * enabled. (2cm by default).
+         */
+        public float shadowBulbRadius = 0.02f;
     }
 
     public static class ShadowCascades {
@@ -423,6 +456,18 @@ public class LightManager {
         }
 
         /**
+         * Enables or disables a light channel. Light channel 0 is enabled by default.
+         *
+         * @param channel Light channel to enable or disable, between 0 and 7.
+         * @param enable Whether to enable or disable the light channel.
+         */
+        @NonNull
+        public Builder lightChannel(@IntRange(from = 0, to = 7) int channel, boolean enable) {
+            nBuilderLightChannel(mNativeBuilder, channel, enable);
+            return this;
+        }
+
+        /**
          * Whether this Light casts shadows (disabled by default)
          *
          * <p>
@@ -451,8 +496,11 @@ public class LightManager {
             nBuilderShadowOptions(mNativeBuilder,
                     options.mapSize, options.shadowCascades, options.cascadeSplitPositions,
                     options.constantBias, options.normalBias, options.shadowFar, options.shadowNearHint,
-                    options.shadowFarHint, options.stable, options.screenSpaceContactShadows,
-                    options.stepCount, options.maxShadowDistance, options.vsmMsaaSamples);
+                    options.shadowFarHint, options.stable,
+                    options.polygonOffsetConstant, options.polygonOffsetSlope,
+                    options.screenSpaceContactShadows,
+                    options.stepCount, options.maxShadowDistance, options.vsmMsaaSamples,
+                    options.blurWidth, options.shadowBulbRadius);
             return this;
         }
 
@@ -741,7 +789,7 @@ public class LightManager {
 
     @NonNull
     public Type getType(@EntityInstance int i) {
-        return Type.values()[nGetType(mNativeObject, i)];
+        return sTypeValues[nGetType(mNativeObject, i)];
     }
 
     /**
@@ -774,6 +822,30 @@ public class LightManager {
     boolean isSpotLight(@EntityInstance int i) {
         Type type = getType(i);
         return type == Type.SPOT || type == Type.FOCUSED_SPOT;
+    }
+
+    /**
+     * Enables or disables a light channel.
+     * Light channel 0 is enabled by default.
+     *
+     * @param i        Instance of the component obtained from getInstance().
+     * @param channel  Light channel to set
+     * @param enable   true to enable, false to disable
+     *
+     * @see Builder#lightChannel
+     */
+    public void setLightChannel(@EntityInstance int i, @IntRange(from = 0, to = 7) int channel, boolean enable) {
+        nSetLightChannel(mNativeObject, i, channel, enable);
+    }
+
+    /**
+     * Returns whether a light channel is enabled on a specified renderable.
+     * @param i        Instance of the component obtained from getInstance().
+     * @param channel  Light channel to query
+     * @return         true if the light channel is enabled, false otherwise
+     */
+    public boolean getLightChannel(@EntityInstance int i, @IntRange(from = 0, to = 7) int channel) {
+        return nGetLightChannel(mNativeObject, i, channel);
     }
 
     /**
@@ -1065,6 +1137,14 @@ public class LightManager {
         return nIsShadowCaster(mNativeObject, i);
     }
 
+    public float getOuterConeAngle(@EntityInstance int i) {
+        return nGetOuterConeAngle(mNativeObject, i);
+    }
+
+    public float getInnerConeAngle(@EntityInstance int i) {
+        return nGetInnerConeAngle(mNativeObject, i);
+    }
+
     public long getNativeObject() {
         return mNativeObject;
     }
@@ -1078,7 +1158,7 @@ public class LightManager {
     private static native void nDestroyBuilder(long nativeBuilder);
     private static native boolean nBuilderBuild(long nativeBuilder, long nativeEngine, int entity);
     private static native void nBuilderCastShadows(long nativeBuilder, boolean enable);
-    private static native void nBuilderShadowOptions(long nativeBuilder, int mapSize, int cascades, float[] splitPositions, float constantBias, float normalBias, float shadowFar, float shadowNearHint, float shadowFarhint, boolean stable, boolean screenSpaceContactShadows, int stepCount, float maxShadowDistance, int vsmMsaaSamples);
+    private static native void nBuilderShadowOptions(long nativeBuilder, int mapSize, int cascades, float[] splitPositions, float constantBias, float normalBias, float shadowFar, float shadowNearHint, float shadowFarhint, boolean stable, float polygonOffsetConstant, float polygonOffsetSlope, boolean screenSpaceContactShadows, int stepCount, float maxShadowDistance, int vsmMsaaSamples, float blurWidth, float shadowBulbRadius);
     private static native void nBuilderCastLight(long nativeBuilder, boolean enabled);
     private static native void nBuilderPosition(long nativeBuilder, float x, float y, float z);
     private static native void nBuilderDirection(long nativeBuilder, float x, float y, float z);
@@ -1091,6 +1171,7 @@ public class LightManager {
     private static native void nBuilderAngularRadius(long nativeBuilder, float angularRadius);
     private static native void nBuilderHaloSize(long nativeBuilder, float haloSize);
     private static native void nBuilderHaloFalloff(long nativeBuilder, float haloFalloff);
+    private static native void nBuilderLightChannel(long nativeBuilder, int channel, boolean enable);
 
     private static native void nComputeUniformSplits(float[] splitPositions, int cascades);
     private static native void nComputeLogSplits(float[] splitPositions, int cascades, float near, float far);
@@ -1118,4 +1199,8 @@ public class LightManager {
     private static native float nGetSunHaloFalloff(long nativeLightManager, int i);
     private static native void nSetShadowCaster(long nativeLightManager, int i, boolean shadowCaster);
     private static native boolean nIsShadowCaster(long nativeLightManager, int i);
+    private static native float nGetOuterConeAngle(long nativeLightManager, int i);
+    private static native float nGetInnerConeAngle(long nativeLightManager, int i);
+    private static native void nSetLightChannel(long nativeLightManager, int i, int channel, boolean enable);
+    private static native boolean nGetLightChannel(long nativeLightManager, int i, int channel);
 }

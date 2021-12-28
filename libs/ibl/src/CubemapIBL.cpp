@@ -280,7 +280,7 @@ static float UTILS_UNUSED VisibilityAshikhmin(float NoV, float NoL, float /*a*/)
  *              N  h
  *
  *                  N       4
- *    Er() = ------------- --- ∑ V(v) <n•l>
+ *    Er() = ------------- --- ∑ L(v) <n•l>
  *             4 ∑ <n•l>    N
  *
  *
@@ -292,8 +292,17 @@ static float UTILS_UNUSED VisibilityAshikhmin(float NoV, float NoL, float /*a*/)
  *
  */
 
+UTILS_ALWAYS_INLINE
 void CubemapIBL::roughnessFilter(
         utils::JobSystem& js, Cubemap& dst, const std::vector<Cubemap>& levels,
+        float linearRoughness, size_t maxNumSamples, math::float3 mirror, bool prefilter,
+        Progress updater, void* userdata) {
+    roughnessFilter(js, dst, { levels.data(), uint32_t(levels.size()) },
+            linearRoughness, maxNumSamples, mirror, prefilter, updater, userdata);
+}
+
+void CubemapIBL::roughnessFilter(
+        utils::JobSystem& js, Cubemap& dst, const utils::Slice<Cubemap>& levels,
         float linearRoughness, size_t maxNumSamples, math::float3 mirror, bool prefilter,
         Progress updater, void* userdata)
 {
@@ -532,7 +541,7 @@ void CubemapIBL::roughnessFilter(
  *            N   l        n•l
  *
  *
- *  To avoid to multiply by 1/PI in the shader, we do it here, which simplifies to:
+ *  To avoid multiplying by 1/PI in the shader, we do it here, which simplifies to:
  *
  *  +----------------------+
  *  |          1           |

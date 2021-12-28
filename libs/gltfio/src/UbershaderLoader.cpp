@@ -44,14 +44,23 @@ public:
     UbershaderLoader(filament::Engine* engine);
     ~UbershaderLoader() {}
 
-    MaterialSource getSource() const noexcept override { return LOAD_UBERSHADERS; }
-
-    filament::MaterialInstance* createMaterialInstance(MaterialKey* config, UvMap* uvmap,
+    MaterialInstance* createMaterialInstance(MaterialKey* config, UvMap* uvmap,
             const char* label) override;
 
     size_t getMaterialsCount() const noexcept override;
-    const filament::Material* const* getMaterials() const noexcept override;
+    const Material* const* getMaterials() const noexcept override;
     void destroyMaterials() override;
+
+    bool needsDummyData(VertexAttribute attrib) const noexcept override {
+        switch (attrib) {
+            case VertexAttribute::UV0:
+            case VertexAttribute::UV1:
+            case VertexAttribute::COLOR:
+                return true;
+            default:
+                return false;
+        }
+    }
 
     Material* getMaterial(const MaterialKey& config) const;
 
@@ -61,10 +70,10 @@ public:
         SPECULAR_GLOSSINESS = 2,
     };
 
-    mutable Material* mMaterials[11] = {};
+    mutable Material* mMaterials[12] = {};
     Texture* mDummyTexture = nullptr;
 
-    filament::Engine* mEngine;
+    Engine* mEngine;
 };
 
 #if GLTFIO_LITE
@@ -81,7 +90,7 @@ public:
 
 #endif
 
-#define MATINDEX(shading, alpha, sheen, transmit) (transmit ? 10 : (sheen ? 9 : (int(shading) + 3 * int(alpha))))
+#define MATINDEX(shading, alpha, sheen, transmit, volume) (volume ? 11 : (transmit ? 10 : (sheen ? 9 : (int(shading) + 3 * int(alpha)))))
 
 UbershaderLoader::UbershaderLoader(Engine* engine) : mEngine(engine) {
     unsigned char texels[4] = {};
@@ -113,30 +122,30 @@ void UbershaderLoader::destroyMaterials() {
 Material* UbershaderLoader::getMaterial(const MaterialKey& config) const {
     const ShadingMode shading = config.unlit ? UNLIT :
             (config.useSpecularGlossiness ? SPECULAR_GLOSSINESS : LIT);
-    const int matindex = MATINDEX(shading, config.alphaMode, config.hasSheen, config.hasTransmission);
+    const int matindex = MATINDEX(shading, config.alphaMode, config.hasSheen, config.hasTransmission, config.hasVolume);
     if (mMaterials[matindex] != nullptr) {
         return mMaterials[matindex];
     }
     switch (matindex) {
-
         #if !GLTFIO_LITE || defined(GLTFRESOURCES_LITE_LIT_OPAQUE_DATA)
-        case MATINDEX(LIT, AlphaMode::OPAQUE, false, false): mMaterials[matindex] = CREATE_MATERIAL(LIT_OPAQUE); break;
+        case MATINDEX(LIT, AlphaMode::OPAQUE, false, false, false): mMaterials[matindex] = CREATE_MATERIAL(LIT_OPAQUE); break;
         #endif
 
         #if !GLTFIO_LITE || defined(GLTFRESOURCES_LITE_LIT_BLEND_DATA)
-        case MATINDEX(LIT, AlphaMode::BLEND, false, false): mMaterials[matindex] = CREATE_MATERIAL(LIT_FADE); break;
+        case MATINDEX(LIT, AlphaMode::BLEND, false, false, false): mMaterials[matindex] = CREATE_MATERIAL(LIT_FADE); break;
         #endif
 
         #if !GLTFIO_LITE
-        case MATINDEX(LIT, AlphaMode::MASK, false, false): mMaterials[matindex] = CREATE_MATERIAL(LIT_MASKED); break;
-        case MATINDEX(UNLIT, AlphaMode::OPAQUE, false, false): mMaterials[matindex] = CREATE_MATERIAL(UNLIT_OPAQUE); break;
-        case MATINDEX(UNLIT, AlphaMode::MASK, false, false): mMaterials[matindex] = CREATE_MATERIAL(UNLIT_MASKED); break;
-        case MATINDEX(UNLIT, AlphaMode::BLEND, false, false): mMaterials[matindex] = CREATE_MATERIAL(UNLIT_FADE); break;
-        case MATINDEX(SPECULAR_GLOSSINESS, AlphaMode::OPAQUE, false, false): mMaterials[matindex] = CREATE_MATERIAL(SPECULARGLOSSINESS_OPAQUE); break;
-        case MATINDEX(SPECULAR_GLOSSINESS, AlphaMode::MASK, false, false): mMaterials[matindex] = CREATE_MATERIAL(SPECULARGLOSSINESS_MASKED); break;
-        case MATINDEX(SPECULAR_GLOSSINESS, AlphaMode::BLEND, false, false): mMaterials[matindex] = CREATE_MATERIAL(SPECULARGLOSSINESS_FADE); break;
-        case MATINDEX(0, 0, false, true): mMaterials[matindex] = CREATE_MATERIAL(LIT_TRANSMISSION); break;
-        case MATINDEX(0, 0, true, false): mMaterials[matindex] = CREATE_MATERIAL(LIT_SHEEN); break;
+        case MATINDEX(LIT, AlphaMode::MASK, false, false, false): mMaterials[matindex] = CREATE_MATERIAL(LIT_MASKED); break;
+        case MATINDEX(UNLIT, AlphaMode::OPAQUE, false, false, false): mMaterials[matindex] = CREATE_MATERIAL(UNLIT_OPAQUE); break;
+        case MATINDEX(UNLIT, AlphaMode::MASK, false, false, false): mMaterials[matindex] = CREATE_MATERIAL(UNLIT_MASKED); break;
+        case MATINDEX(UNLIT, AlphaMode::BLEND, false, false, false): mMaterials[matindex] = CREATE_MATERIAL(UNLIT_FADE); break;
+        case MATINDEX(SPECULAR_GLOSSINESS, AlphaMode::OPAQUE, false, false, false): mMaterials[matindex] = CREATE_MATERIAL(SPECULARGLOSSINESS_OPAQUE); break;
+        case MATINDEX(SPECULAR_GLOSSINESS, AlphaMode::MASK, false, false, false): mMaterials[matindex] = CREATE_MATERIAL(SPECULARGLOSSINESS_MASKED); break;
+        case MATINDEX(SPECULAR_GLOSSINESS, AlphaMode::BLEND, false, false, false): mMaterials[matindex] = CREATE_MATERIAL(SPECULARGLOSSINESS_FADE); break;
+        case MATINDEX(0, 0, false, true, false): mMaterials[matindex] = CREATE_MATERIAL(LIT_TRANSMISSION); break;
+        case MATINDEX(0, 0, true, false, false): mMaterials[matindex] = CREATE_MATERIAL(LIT_SHEEN); break;
+        case MATINDEX(0, 0, false, false, true): mMaterials[matindex] = CREATE_MATERIAL(LIT_VOLUME); break;
         #endif
     }
     if (mMaterials[matindex] == nullptr) {
@@ -144,6 +153,8 @@ Material* UbershaderLoader::getMaterial(const MaterialKey& config) const {
         MaterialKey litOpaque = config;
         litOpaque.alphaMode = AlphaMode::OPAQUE;
         litOpaque.hasTransmission = false;
+        litOpaque.hasVolume = false;
+        litOpaque.hasSheen = false;
         litOpaque.useSpecularGlossiness = false;
         litOpaque.unlit = false;
         return getMaterial(litOpaque);
@@ -158,18 +169,25 @@ MaterialInstance* UbershaderLoader::createMaterialInstance(MaterialKey* config, 
         return nullptr;
     }
 
+    if (config->hasVolume && config->hasSheen) {
+        slog.w << "Volume and sheen are not supported together in ubershader mode,"
+                  " removing sheen (" << label << ")." << io::endl;
+        config->hasSheen = false;
+    }
+
     if (config->hasTransmission && config->hasSheen) {
         slog.w << "Transmission and sheen are not supported together in ubershader mode,"
                   " removing sheen (" << label << ")." << io::endl;
         config->hasSheen = false;
     }
 
-    const bool clearCoatConflict = config->hasTransmission || config->hasSheen;
+    const bool clearCoatConflict = config->hasVolume || config->hasTransmission || config->hasSheen;
 
     // Due to sampler overload, disable transmission if necessary and print a friendly warning.
     if (config->hasClearCoat && clearCoatConflict) {
-        slog.w << "Transmission and sheen are not supported in ubershader mode for clearcoat"
+        slog.w << "Volume, transmission and sheen are not supported in ubershader mode for clearcoat"
                   " materials (" << label << ")." << io::endl;
+        config->hasVolume = false;
         config->hasTransmission = false;
         config->hasSheen = false;
     }
@@ -190,10 +208,16 @@ MaterialInstance* UbershaderLoader::createMaterialInstance(MaterialKey* config, 
 
     mi->setDoubleSided(config->doubleSided);
     mi->setCullingMode(config->doubleSided ? CullingMode::NONE : CullingMode::BACK);
-
-    bool clearCoatNeedsTexture = true;
+    mi->setTransparencyMode(config->doubleSided ?
+            MaterialInstance::TransparencyMode::TWO_PASSES_TWO_SIDES :
+            MaterialInstance::TransparencyMode::DEFAULT);
 
     #if !GLTFIO_LITE
+
+    // Initially, assume that the clear coat texture can be honored.  This is changed to false when
+    // running into a sampler count limitation. TODO: check if these constraints can now be relaxed.
+    bool clearCoatNeedsTexture = true;
+
     mat3f identity;
     mi->setParameter("baseColorUvMatrix", identity);
     mi->setParameter("metallicRoughnessUvMatrix", identity);
@@ -222,6 +246,12 @@ MaterialInstance* UbershaderLoader::createMaterialInstance(MaterialKey* config, 
             mi->setParameter("sheenRoughnessUvMatrix", identity);
 
         }
+        if (config->hasVolume) {
+            clearCoatNeedsTexture = false;
+            mi->setParameter("volumeThicknessUvMatrix", identity);
+            mi->setParameter("volumeThicknessIndex",
+                    getUvIndex(config->transmissionUV, config->hasVolumeThicknessTexture));
+        }
         if (config->hasTransmission) {
             clearCoatNeedsTexture = false;
             mi->setParameter("transmissionUvMatrix", identity);
@@ -229,6 +259,14 @@ MaterialInstance* UbershaderLoader::createMaterialInstance(MaterialKey* config, 
                     getUvIndex(config->transmissionUV, config->hasTransmissionTexture));
         }
     }
+    #else
+
+    // In the GLTFIO_LITE configuration we do not support UV matrices, clear coat, sheen, specular
+    // glossiness, or transmission. For more details, see `gltflite.mat.in`. To configure a custom
+    // set of features, create your own MaterialProvider class, perhaps using UbershaderLoader as a
+    // starting point.
+    const bool clearCoatNeedsTexture = false;
+
     #endif
 
     TextureSampler sampler;
@@ -250,6 +288,13 @@ MaterialInstance* UbershaderLoader::createMaterialInstance(MaterialKey* config, 
             mi->setParameter("sheenColorMap", mDummyTexture, sampler);
             mi->setParameter("sheenRoughnessMap", mDummyTexture, sampler);
         }
+    }
+
+    if (mi->getMaterial()->hasParameter("ior")) {
+        mi->setParameter("ior", 1.5f);
+    }
+    if (mi->getMaterial()->hasParameter("reflectance")) {
+        mi->setParameter("reflectance", 0.5f);
     }
 
     return mi;

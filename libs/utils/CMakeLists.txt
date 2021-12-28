@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.19)
 project(utils)
 
 set(TARGET utils)
@@ -14,25 +14,28 @@ file(GLOB_RECURSE PUBLIC_HDRS ${PUBLIC_HDR_DIR}/${TARGET}/*.h)
 set(DIST_HDRS
         ${PUBLIC_HDR_DIR}/${TARGET}/algorithm.h
         ${PUBLIC_HDR_DIR}/${TARGET}/bitset.h
+        ${PUBLIC_HDR_DIR}/${TARGET}/CallStack.h
         ${PUBLIC_HDR_DIR}/${TARGET}/debug.h
         ${PUBLIC_HDR_DIR}/${TARGET}/Allocator.h
         ${PUBLIC_HDR_DIR}/${TARGET}/BitmaskEnum.h
         ${PUBLIC_HDR_DIR}/${TARGET}/compiler.h
+        ${PUBLIC_HDR_DIR}/${TARGET}/compressed_pair.h
         ${PUBLIC_HDR_DIR}/${TARGET}/CString.h
         ${PUBLIC_HDR_DIR}/${TARGET}/Entity.h
         ${PUBLIC_HDR_DIR}/${TARGET}/EntityInstance.h
         ${PUBLIC_HDR_DIR}/${TARGET}/EntityManager.h
+        ${PUBLIC_HDR_DIR}/${TARGET}/FixedCapacityVector.h
         ${PUBLIC_HDR_DIR}/${TARGET}/Log.h
         ${PUBLIC_HDR_DIR}/${TARGET}/memalign.h
         ${PUBLIC_HDR_DIR}/${TARGET}/Mutex.h
         ${PUBLIC_HDR_DIR}/${TARGET}/NameComponentManager.h
         ${PUBLIC_HDR_DIR}/${TARGET}/ostream.h
+        ${PUBLIC_HDR_DIR}/${TARGET}/Panic.h
         ${PUBLIC_HDR_DIR}/${TARGET}/Path.h
         ${PUBLIC_HDR_DIR}/${TARGET}/SingleInstanceComponentManager.h
         ${PUBLIC_HDR_DIR}/${TARGET}/Slice.h
         ${PUBLIC_HDR_DIR}/${TARGET}/SpinLock.h
         ${PUBLIC_HDR_DIR}/${TARGET}/StructureOfArrays.h
-        ${PUBLIC_HDR_DIR}/${TARGET}/ThreadLocal.h
         ${PUBLIC_HDR_DIR}/${TARGET}/unwindows.h
 )
 
@@ -63,6 +66,7 @@ set(SRCS
         src/Path.cpp
         src/Profiler.cpp
         src/sstream.cpp
+        src/string.cpp
         src/Systrace.cpp
 )
 
@@ -90,6 +94,7 @@ target_link_libraries(${TARGET} PUBLIC tsl)
 if (ANDROID)
     target_link_libraries(${TARGET} PUBLIC log)
     target_link_libraries(${TARGET} PRIVATE dl)
+    target_link_libraries(${TARGET} PUBLIC android)
 endif()
 
 if (WIN32)
@@ -103,15 +108,6 @@ if (LINUX)
     target_link_libraries(${TARGET} PRIVATE Threads::Threads)
     target_link_libraries(${TARGET} PRIVATE dl)
 endif()
-
-# ==================================================================================================
-# Compiler flags
-# ==================================================================================================
-target_compile_options(${TARGET} PRIVATE
-# TODO: use hidden by default and expose what we need
-#        -fvisibility=hidden
-#        -fvisibility-inlines-hidden
-)
 
 # ==================================================================================================
 # Installation
@@ -137,9 +133,11 @@ set(TEST_SRCS
         test/test_CString.cpp
         test/test_CyclicBarrier.cpp
         test/test_Entity.cpp
+        test/test_FixedCapacityVector.cpp
         test/test_JobSystem.cpp
         test/test_StructureOfArrays.cpp
         test/test_sstream.cpp
+        test/test_string.cpp
         test/test_utils_main.cpp
         test/test_Zip2Iterator.cpp
         test/test_BinaryTreeArray.cpp

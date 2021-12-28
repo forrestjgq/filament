@@ -106,10 +106,14 @@ import com.google.android.filament.proguard.UsedByReflection;
  * @see Renderer
  */
 public class Engine {
+    private static final Backend[] sBackendValues = Backend.values();
+
     private long mNativeObject;
+
     @NonNull private final TransformManager mTransformManager;
     @NonNull private final LightManager mLightManager;
     @NonNull private final RenderableManager mRenderableManager;
+    @NonNull private final EntityManager mEntityManager;
 
     /**
      * Denotes a backend
@@ -142,6 +146,7 @@ public class Engine {
         mTransformManager = new TransformManager(nGetTransformManager(nativeEngine));
         mLightManager = new LightManager(nGetLightManager(nativeEngine));
         mRenderableManager = new RenderableManager(nGetRenderableManager(nativeEngine));
+        mEntityManager = new EntityManager(nGetEntityManager(nativeEngine));
     }
 
     /**
@@ -250,7 +255,7 @@ public class Engine {
      */
     @NonNull
     public Backend getBackend() {
-        return Backend.values()[(int) nGetBackend(getNativeObject())];
+        return sBackendValues[(int) nGetBackend(getNativeObject())];
     }
 
     // SwapChain
@@ -398,19 +403,6 @@ public class Engine {
     // Camera
 
     /**
-     * Creates a new <code>entity</code> and adds a {@link Camera} component to it.
-     *
-     * @return A newly created {@link Camera}
-     * @exception IllegalStateException can be thrown if the {@link Camera} couldn't be created
-     */
-    @NonNull
-    public Camera createCamera() {
-        long nativeCamera = nCreateCamera(getNativeObject());
-        if (nativeCamera == 0) throw new IllegalStateException("Couldn't create Camera");
-        return new Camera(nativeCamera);
-    }
-
-    /**
      * Creates and adds a {@link Camera} component to a given <code>entity</code>.
      *
      * @param entity <code>entity</code> to add the camera component to
@@ -419,9 +411,9 @@ public class Engine {
      */
     @NonNull
     public Camera createCamera(@Entity int entity) {
-        long nativeCamera = nCreateCameraWithEntity(getNativeObject(), entity);
+        long nativeCamera = nCreateCamera(getNativeObject(), entity);
         if (nativeCamera == 0) throw new IllegalStateException("Couldn't create Camera");
-        return new Camera(nativeCamera);
+        return new Camera(nativeCamera, entity);
     }
 
     /**
@@ -435,16 +427,16 @@ public class Engine {
     public Camera getCameraComponent(@Entity int entity) {
         long nativeCamera = nGetCameraComponent(getNativeObject(), entity);
         if (nativeCamera == 0) return null;
-        return new Camera(nativeCamera);
+        return new Camera(nativeCamera, entity);
     }
 
     /**
-     * Destroys a {@link Camera} component and frees all its associated resources.
-     * @param camera the {@link Camera} to destroy
+     * Destroys the {@link Camera} component associated with the given entity.
+     *
+     * @param entity an entity
      */
-    public void destroyCamera(@NonNull Camera camera) {
-        nDestroyCamera(getNativeObject(), camera.getNativeObject());
-        camera.clearNativeObject();
+    public void destroyCameraComponent(@Entity int entity) {
+        nDestroyCameraComponent(getNativeObject(), entity);
     }
 
     // Scene
@@ -522,6 +514,15 @@ public class Engine {
     public void destroyVertexBuffer(@NonNull VertexBuffer vertexBuffer) {
         assertDestroy(nDestroyVertexBuffer(getNativeObject(), vertexBuffer.getNativeObject()));
         vertexBuffer.clearNativeObject();
+    }
+
+    /**
+     * Destroys a {@link SkinningBuffer} and frees all its associated resources.
+     * @param skinningBuffer the {@link SkinningBuffer} to destroy
+     */
+    public void destroySkinningBuffer(@NonNull SkinningBuffer skinningBuffer) {
+        assertDestroy(nDestroySkinningBuffer(getNativeObject(), skinningBuffer.getNativeObject()));
+        skinningBuffer.clearNativeObject();
     }
 
     /**
@@ -633,8 +634,16 @@ public class Engine {
     }
 
     /**
+     * @return the {@link EntityManager} used by this {@link Engine}
+     */
+    @NonNull
+    public EntityManager getEntityManager() {
+        return mEntityManager;
+    }
+
+    /**
      * Kicks the hardware thread (e.g.: the OpenGL, Vulkan or Metal thread) and blocks until
-     * all commands to this point are executed. Note that this doesn't guarantee that the
+     * all commands to this point are executed. Note that this does guarantee that the
      * hardware is actually finished.
      *
      * <p>This is typically used right after destroying the <code>SwapChain</code>,
@@ -683,10 +692,9 @@ public class Engine {
     private static native boolean nDestroyView(long nativeEngine, long nativeView);
     private static native long nCreateRenderer(long nativeEngine);
     private static native boolean nDestroyRenderer(long nativeEngine, long nativeRenderer);
-    private static native long nCreateCamera(long nativeEngine);
-    private static native long nCreateCameraWithEntity(long nativeEngine, int entity);
+    private static native long nCreateCamera(long nativeEngine, int entity);
     private static native long nGetCameraComponent(long nativeEngine, int entity);
-    private static native void nDestroyCamera(long nativeEngine, long nativeCamera);
+    private static native void nDestroyCameraComponent(long nativeEngine, int entity);
     private static native long nCreateScene(long nativeEngine);
     private static native boolean nDestroyScene(long nativeEngine, long nativeScene);
     private static native long nCreateFence(long nativeEngine);
@@ -694,6 +702,7 @@ public class Engine {
     private static native boolean nDestroyStream(long nativeEngine, long nativeStream);
     private static native boolean nDestroyIndexBuffer(long nativeEngine, long nativeIndexBuffer);
     private static native boolean nDestroyVertexBuffer(long nativeEngine, long nativeVertexBuffer);
+    private static native boolean nDestroySkinningBuffer(long nativeEngine, long nativeSkinningBuffer);
     private static native boolean nDestroyIndirectLight(long nativeEngine, long nativeIndirectLight);
     private static native boolean nDestroyMaterial(long nativeEngine, long nativeMaterial);
     private static native boolean nDestroyMaterialInstance(long nativeEngine, long nativeMaterialInstance);
@@ -707,4 +716,5 @@ public class Engine {
     private static native long nGetLightManager(long nativeEngine);
     private static native long nGetRenderableManager(long nativeEngine);
     private static native long nGetJobSystem(long nativeEngine);
+    private static native long nGetEntityManager(long nativeEngine);
 }

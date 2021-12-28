@@ -1,7 +1,7 @@
 # ==================================================================================================
 # CMake
 # ==================================================================================================
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.19)
 
 # ==================================================================================================
 # Project declaration
@@ -11,8 +11,6 @@ project(TNT)
 # ==================================================================================================
 # Options
 # ==================================================================================================
-option(FILAMENT_ENABLE_JAVA "Compile Java projects, requires a JDK and the JAVA_HOME env var" ON)
-
 option(FILAMENT_USE_EXTERNAL_GLES3 "Experimental: Compile Filament against OpenGL ES 3" OFF)
 
 option(FILAMENT_USE_SWIFTSHADER "Compile Filament against SwiftShader" OFF)
@@ -24,6 +22,16 @@ option(FILAMENT_SKIP_SAMPLES "Don't build samples" OFF)
 option(FILAMENT_SUPPORTS_XCB "Include XCB support in Linux builds" ON)
 
 option(FILAMENT_SUPPORTS_XLIB "Include XLIB support in Linux builds" ON)
+
+option(FILAMENT_SUPPORTS_WAYLAND "Include Wayland support in Linux builds" OFF)
+
+option(FILAMENT_SKIP_SDL2 "Skip dependencies of SDL2, and SDL2" OFF)
+
+option(FILAMENT_LINUX_IS_MOBILE "Treat Linux as Mobile" OFF)
+
+set(FILAMENT_NDK_VERSION "" CACHE STRING
+    "Android NDK version or version prefix to be used when building for Android."
+)
 
 set(FILAMENT_PER_RENDER_PASS_ARENA_SIZE_IN_MB "2" CACHE STRING
     "Per render pass arena size. Must be roughly 1 MB larger than FILAMENT_PER_FRAME_COMMANDS_SIZE_IN_MB, default 2."
@@ -37,8 +45,12 @@ set(FILAMENT_MIN_COMMAND_BUFFERS_SIZE_IN_MB "1" CACHE STRING
     "Size of the command-stream buffer. As a rule of thumb use the same value as FILAMENT_PER_FRRAME_COMMANDS_SIZE_IN_MB, default 1."
 )
 
-set(FILAMENT_OPENGL_HANDLE_ARENA_SIZE_IN_MB "2" CACHE STRING
-    "Size of the OpenGL handle arena, default 2."
+set(FILAMENT_OPENGL_HANDLE_ARENA_SIZE_IN_MB "4" CACHE STRING
+    "Size of the OpenGL handle arena, default 4."
+)
+
+set(FILAMENT_METAL_HANDLE_ARENA_SIZE_IN_MB "8" CACHE STRING
+    "Size of the Metal handle arena, default 8."
 )
 
 # ==================================================================================================
@@ -88,20 +100,30 @@ if (UNIX AND NOT APPLE AND NOT ANDROID AND NOT WEBGL)
 endif()
 
 if (LINUX)
-    if (FILAMENT_SUPPORTS_XCB)
-        add_definitions(-DFILAMENT_SUPPORTS_XCB)
-    endif()
+    if (FILAMENT_SUPPORTS_WAYLAND)
+        add_definitions(-DFILAMENT_SUPPORTS_WAYLAND)
+        set(FILAMENT_SUPPORTS_X11 FALSE)
+    else ()
+        if (FILAMENT_SUPPORTS_XCB)
+            add_definitions(-DFILAMENT_SUPPORTS_XCB)
+        endif()
 
-    if (FILAMENT_SUPPORTS_XLIB)
-        add_definitions(-DFILAMENT_SUPPORTS_XLIB)
+        if (FILAMENT_SUPPORTS_XLIB)
+            add_definitions(-DFILAMENT_SUPPORTS_XLIB)
+        endif()
+
+        if (FILAMENT_SUPPORTS_XCB OR FILAMENT_SUPORTS_XLIB)
+            add_definitions(-DFILAMENT_SUPPORTS_X11)
+            set(FILAMENT_SUPPORTS_X11 TRUE)
+        endif()
     endif()
 endif()
 
-if (ANDROID OR WEBGL OR IOS)
+if (ANDROID OR WEBGL OR IOS OR FILAMENT_LINUX_IS_MOBILE)
     set(IS_MOBILE_TARGET TRUE)
 endif()
 
-if (NOT ANDROID AND NOT WEBGL AND NOT IOS)
+if (NOT ANDROID AND NOT WEBGL AND NOT IOS AND NOT FILAMENT_LINUX_IS_MOBILE)
     set(IS_HOST_PLATFORM TRUE)
 endif()
 
@@ -125,27 +147,35 @@ if (WIN32)
     # __declspec(dllexport) in front of each functions).
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
+    # The CMAKE_CXX_FLAGS vars can be overriden by some Visual Studio generators, so we use an alternative
+    # global method here:
     if (${USE_STATIC_CRT})
-        set(CRT_FLAGS_RELEASE "/MT")
-        set(CRT_FLAGS_DEBUG "/MTd")
+        add_compile_options(
+            $<$<CONFIG:>:/MT>
+            $<$<CONFIG:Debug>:/MTd>
+            $<$<CONFIG:Release>:/MT>
+        )
     else()
-        set(CRT_FLAGS_RELEASE "/MD")
-        set(CRT_FLAGS_DEBUG "/MDd")
+        add_compile_options(
+            $<$<CONFIG:>:/MD>
+            $<$<CONFIG:Debug>:/MDd>
+            $<$<CONFIG:Release>:/MD>
+        )
     endif()
 
     # TODO: Figure out why pdb generation messes with incremental compilaton.
     # IN RELEASE_WITH_DEBUG_INFO, generate debug info in .obj, no in pdb.
-    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} ${CRT_FLAGS_RELEASE} /Z7")
-    set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO} ${CRT_FLAGS_RELEASE} /Z7")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Z7")
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO} /Z7")
 
     # In RELEASE, also generate PDBs.
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${CRT_FLAGS_RELEASE} /Zi")
-    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${CRT_FLAGS_RELEASE} /Zi")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
 
     # In DEBUG, avoid generating a PDB file which seems to mess with incremental compilation.
     # Instead generate debug info directly inside obj files.
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${CRT_FLAGS_DEBUG} /Z7")
-    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} ${CRT_FLAGS_DEBUG} /Z7")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Z7")
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /Z7")
 
     # Special settings when building on CI.
     if (${FILAMENT_WINDOWS_CI_BUILD})
@@ -285,6 +315,12 @@ if (UNIX AND CMAKE_GENERATOR STREQUAL "Ninja")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcolor-diagnostics")
 endif()
 
+# Use hidden by default and expose what we need.
+if (NOT WIN32)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=hidden")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden")
+endif()
+
 # ==================================================================================================
 # Release compiler flags
 # ==================================================================================================
@@ -365,6 +401,12 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebIn
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DTNT_DEV")
 endif()
 
+# By default, build with support for OpenGL on all platforms.
+option(FILAMENT_SUPPORTS_OPENGL "Include the OpenGL backend" ON)
+if (FILAMENT_SUPPORTS_OPENGL)
+    add_definitions(-DFILAMENT_SUPPORTS_OPENGL)
+endif()
+
 # By default, build with Vulkan support on desktop platforms, although clients must request to use
 # it at run time.
 if (WIN32 OR WEBGL OR IOS)
@@ -400,6 +442,13 @@ else()
     option(FILAMENT_ENABLE_MATDBG "Enable the material debugger" OFF)
 endif()
 
+# Only optimize materials in Release mode (so error message lines match the source code)
+if (CMAKE_BUILD_TYPE MATCHES Release)
+    option(FILAMENT_DISABLE_MATOPT "Disable material optimizations" OFF)
+else()
+    option(FILAMENT_DISABLE_MATOPT "Disable material optimizations" ON)
+endif()
+
 # ==================================================================================================
 # Material compilation flags
 # ==================================================================================================
@@ -413,9 +462,9 @@ endif()
 
 set(MATC_API_FLAGS )
 
-# TODO: Add a flag to build Filament without support for OpenGL.
-set(MATC_API_FLAGS ${MATC_API_FLAGS} -a opengl)
-
+if (FILAMENT_SUPPORTS_OPENGL)
+    set(MATC_API_FLAGS ${MATC_API_FLAGS} -a opengl)
+endif()
 if (FILAMENT_SUPPORTS_VULKAN)
     set(MATC_API_FLAGS ${MATC_API_FLAGS} -a vulkan)
 endif()
@@ -423,9 +472,9 @@ if (FILAMENT_SUPPORTS_METAL)
     set(MATC_API_FLAGS ${MATC_API_FLAGS} -a metal)
 endif()
 
-# Only optimize materials in Release mode (so error message lines match the source code)
-if (NOT CMAKE_BUILD_TYPE MATCHES Release)
-    set(MATC_OPT_FLAGS -g)
+# Disable optimizations and enable debug info (preserves names in SPIR-V)
+if (FILAMENT_DISABLE_MATOPT)
+    set(MATC_OPT_FLAGS -gd)
 endif()
 
 set(MATC_BASE_FLAGS ${MATC_API_FLAGS} -p ${MATC_TARGET} ${MATC_OPT_FLAGS})
@@ -443,11 +492,15 @@ if (NOT DIST_ARCH)
     if (CMAKE_OSX_ARCHITECTURES MATCHES ".*;.*")
         set(DIST_ARCH "universal")
     else()
-        if (NOT CMAKE_OSX_ARCHITECTURES STREQUAL "")
+        if (NOT "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "")
             set(DIST_ARCH "${CMAKE_OSX_ARCHITECTURES}")
         endif()
     endif()
+
 endif()
+# On Windows machines, the host processor is set to 'AMD64', which we'll interpret as x86_64.
+string(TOLOWER "${DIST_ARCH}" DIST_ARCH)
+string(REPLACE "amd64" "x86_64" DIST_ARCH "${DIST_ARCH}")
 if (NOT DIST_DIR)
     set(DIST_DIR "${DIST_ARCH}")
 endif()
@@ -465,11 +518,15 @@ function(list_licenses OUTPUT MODULES)
     foreach(module ${_MODULES})
         set(license_path "../../third_party/${module}/LICENSE")
         get_filename_component(fullname "${license_path}" ABSOLUTE)
-        string(APPEND CONTENT "${STR_OPENER}License and copyrights for ${module}:\n${STR_CLOSER},\n")
-        file(READ ${license_path} license_long)
-        string(REPLACE "\n" "${STR_CLOSER},\n${STR_OPENER}" license ${license_long})
-        string(APPEND CONTENT ${STR_OPENER}${license}\n${STR_CLOSER},)
-        string(APPEND CONTENT "\n\n")
+        if(EXISTS ${fullname})
+            string(APPEND CONTENT "${STR_OPENER}License and copyrights for ${module}:\n${STR_CLOSER},\n")
+            file(READ ${license_path} license_long)
+            string(REPLACE "\n" "${STR_CLOSER},\n${STR_OPENER}" license ${license_long})
+            string(APPEND CONTENT ${STR_OPENER}${license}\n${STR_CLOSER},)
+            string(APPEND CONTENT "\n\n")
+        else()
+            message(AUTHOR_WARNING "${license_path} not found. You can ignore this warning if you have devendored ${module}.")
+        endif()
     endforeach()
     configure_file(${FILAMENT}/build/licenses.inc.in ${OUTPUT})
 endfunction(list_licenses)
@@ -485,7 +542,12 @@ function(combine_static_libs TARGET OUTPUT DEPS)
     # Loop through the dependent libraries and query their location on disk.
     set(DEPS_FILES )
     foreach(DEPENDENCY ${DEPS})
-        list(APPEND DEPS_FILES "$<TARGET_FILE:${DEPENDENCY}>")
+        if(TARGET ${DEPENDENCY})
+            get_property(dep_type TARGET ${DEPENDENCY} PROPERTY TYPE)
+            if(dep_type STREQUAL "STATIC_LIBRARY")
+                list(APPEND DEPS_FILES "$<TARGET_FILE:${DEPENDENCY}>")
+            endif()
+        endif()
     endforeach()
 
     add_custom_command(
@@ -518,12 +580,14 @@ if (FILAMENT_USE_SWIFTSHADER)
     find_library(SWIFTSHADER_VK NAMES vk_swiftshader HINTS "$ENV{SWIFTSHADER_LD_LIBRARY_PATH}")
     message(STATUS "Found SwiftShader VK library in: ${SWIFTSHADER_VK}.")
     add_definitions(-DFILAMENT_VKLIBRARY_PATH=\"${SWIFTSHADER_VK}\")
-elseif (FILAMENT_SUPPORTS_VULKAN AND APPLE)
-    find_library(Vulkan_LIBRARY NAMES vulkan HINTS "$ENV{VULKAN_SDK}/lib" "$ENV{VULKAN_SDK}/macOS/lib")
-    if (Vulkan_LIBRARY)
-        set(Vulkan_FOUND ON)
-        message(STATUS "Found Vulkan library in SDK: ${Vulkan_LIBRARY}.")
-        add_definitions(-DFILAMENT_VKLIBRARY_PATH=\"${Vulkan_LIBRARY}\")
+elseif (FILAMENT_SUPPORTS_VULKAN)
+    if (APPLE OR FILAMENT_LINUX_IS_MOBILE)
+        find_library(Vulkan_LIBRARY NAMES vulkan HINTS "$ENV{VULKAN_SDK}/lib" "$ENV{VULKAN_SDK}/macOS/lib")
+        if (Vulkan_LIBRARY)
+            set(Vulkan_FOUND ON)
+            message(STATUS "Found Vulkan library in SDK: ${Vulkan_LIBRARY}.")
+            add_definitions(-DFILAMENT_VKLIBRARY_PATH=\"${Vulkan_LIBRARY}\")
+        endif()
     endif()
 endif()
 
@@ -577,6 +641,7 @@ add_subdirectory(${LIBRARIES}/filameshio)
 add_subdirectory(${LIBRARIES}/geometry)
 add_subdirectory(${LIBRARIES}/gltfio)
 add_subdirectory(${LIBRARIES}/ibl)
+add_subdirectory(${LIBRARIES}/iblprefilter)
 add_subdirectory(${LIBRARIES}/image)
 add_subdirectory(${LIBRARIES}/math)
 add_subdirectory(${LIBRARIES}/mathio)
@@ -628,13 +693,11 @@ if (WEBGL)
 endif()
 
 if (IS_HOST_PLATFORM)
-    add_subdirectory(${LIBRARIES}/bluegl)
+    if (FILAMENT_SUPPORTS_OPENGL)
+        add_subdirectory(${LIBRARIES}/bluegl)
+    endif()
     add_subdirectory(${LIBRARIES}/filamentapp)
     add_subdirectory(${LIBRARIES}/imageio)
-
-    add_subdirectory(${FILAMENT}/java/filamat)
-    add_subdirectory(${FILAMENT}/java/filament)
-    add_subdirectory(${FILAMENT}/java/gltfio)
 
     add_subdirectory(${FILAMENT}/samples)
 
@@ -655,6 +718,7 @@ if (IS_HOST_PLATFORM)
     add_subdirectory(${TOOLS}/mipgen)
     add_subdirectory(${TOOLS}/normal-blending)
     add_subdirectory(${TOOLS}/resgen)
+    add_subdirectory(${TOOLS}/rgb-to-lmsr)
     add_subdirectory(${TOOLS}/roughness-prefilter)
     add_subdirectory(${TOOLS}/specular-color)
 endif()

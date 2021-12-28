@@ -1,40 +1,72 @@
 #if defined(HAS_VSM)
 layout(location = 0) out vec4 fragColor;
+#elif defined(HAS_PICKING)
+layout(location = 0) out highp uint2 outPicking;
+#else
+// not color output
 #endif
 
 //------------------------------------------------------------------------------
 // Depth
+//
+// note: HAS_VSM and HAS_PICKING are mutually exclusive
 //------------------------------------------------------------------------------
 
+highp vec2 computeDepthMomentsVSM(const highp float depth);
+
 void main() {
-#if defined(BLEND_MODE_MASKED)
+    filament_lodBias = frameUniforms.lodBias;
+
+#if defined(BLEND_MODE_MASKED) || ((defined(BLEND_MODE_TRANSPARENT) || defined(BLEND_MODE_FADE)) && defined(HAS_TRANSPARENT_SHADOW))
     MaterialInputs inputs;
     initMaterial(inputs);
     material(inputs);
 
     float alpha = inputs.baseColor.a;
+#if defined(BLEND_MODE_MASKED)
     if (alpha < getMaskThreshold()) {
         discard;
     }
 #endif
 
+#if defined(HAS_TRANSPARENT_SHADOW)
+    // Interleaved gradient noise, see dithering.fs
+    float noise = fract(52.982919 * fract(dot(vec2(0.06711, 0.00584), gl_FragCoord.xy)));
+    if (noise >= alpha) {
+        discard;
+    }
+#endif
+#endif
+
 #if defined(HAS_VSM)
-    // For VSM, we use the linear light space Z coordinate as the depth metric, which works for both
-    // directional and spot lights.
-    // We negate it, because we're using a right-handed coordinate system (-Z points forward).
-    highp float depth = -mulMat4x4Float3(frameUniforms.viewFromWorldMatrix, vertex_worldPosition).z;
+    // interpolated depth is stored in vertex_worldPosition.w (see main.vs)
+    highp float depth = vertex_worldPosition.w;
+    depth = exp(depth);
+    fragColor.xy = computeDepthMomentsVSM(depth);
+    fragColor.zw = vec2(0.0);
+    // enable for full EVSM (needed for large blurs). RGBA16F needed.
+    //fragColor.zw = computeDepthMomentsVSM(-1.0/depth);
+#elif defined(HAS_PICKING)
+    outPicking.x = objectUniforms.objectId;
+    outPicking.y = floatBitsToUint(vertex_position.z / vertex_position.w);
+#else
+    // that's it
+#endif
+}
 
-    // Scale by cameraFar to help prevent a floating point overflow below when squaring the depth.
-    depth /= abs(frameUniforms.cameraFar);
+highp vec2 computeDepthMomentsVSM(const highp float depth) {
+    // computes the moments
+    // See GPU Gems 3
+    // https://developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-8-summed-area-variance-shadow-maps
+    highp vec2 moments;
 
+    // the first moment is just the depth (average)
+    moments.x = depth;
+
+    // compute the 2nd moment over the pixel extents.
     highp float dx = dFdx(depth);
     highp float dy = dFdy(depth);
+    moments.y = depth * depth + 0.25 * (dx * dx + dy * dy);
 
-    // Output the first and second depth moments.
-    // The first moment is mean depth.
-    // The second moment is mean depth squared.
-    // These values are retrieved when sampling the shadow map to compute variance.
-    highp float bias = 0.25 * (dx * dx + dy * dy);
-    fragColor = vec4(depth, depth * depth + bias, 0.0, 0.0);
-#endif
+    return moments;
 }

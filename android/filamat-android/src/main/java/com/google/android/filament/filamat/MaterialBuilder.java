@@ -91,7 +91,7 @@ public class MaterialBuilder {
         SHADOW
     }
 
-    public enum SamplerPrecision {
+    public enum ParameterPrecision {
         LOW,
         MEDIUM,
         HIGH,
@@ -247,19 +247,36 @@ public class MaterialBuilder {
 
     @NonNull
     public MaterialBuilder uniformParameter(@NonNull UniformType type, String name) {
-        nMaterialBuilderUniformParameter(mNativeObject, type.ordinal(), name);
+        nMaterialBuilderUniformParameter(mNativeObject, type.ordinal(),
+                ParameterPrecision.DEFAULT.ordinal(), name);
+        return this;
+    }
+
+    @NonNull
+    public MaterialBuilder uniformParameter(@NonNull UniformType type,
+            ParameterPrecision precision, String name) {
+        nMaterialBuilderUniformParameter(mNativeObject, type.ordinal(), precision.ordinal(), name);
         return this;
     }
 
     @NonNull
     public MaterialBuilder uniformParameterArray(@NonNull UniformType type, int size, String name) {
-        nMaterialBuilderUniformParameterArray(mNativeObject, type.ordinal(), size, name);
+        nMaterialBuilderUniformParameterArray(mNativeObject, type.ordinal(), size,
+                ParameterPrecision.DEFAULT.ordinal(), name);
+        return this;
+    }
+
+    @NonNull
+    public MaterialBuilder uniformParameterArray(@NonNull UniformType type, int size,
+            ParameterPrecision precision, String name) {
+        nMaterialBuilderUniformParameterArray(mNativeObject, type.ordinal(), size,
+                precision.ordinal(), name);
         return this;
     }
 
     @NonNull
     public MaterialBuilder samplerParameter(@NonNull SamplerType type, SamplerFormat format,
-            SamplerPrecision precision, String name) {
+            ParameterPrecision precision, String name) {
         nMaterialBuilderSamplerParameter(
                 mNativeObject, type.ordinal(), format.ordinal(), precision.ordinal(), name);
         return this;
@@ -350,6 +367,12 @@ public class MaterialBuilder {
     }
 
     @NonNull
+    public MaterialBuilder transparentShadow(boolean transparentShadow) {
+        nMaterialBuilderTransparentShadow(mNativeObject, transparentShadow);
+        return this;
+    }
+
+    @NonNull
     public MaterialBuilder specularAntiAliasing(boolean specularAntiAliasing) {
         nMaterialBuilderSpecularAntiAliasing(mNativeObject, specularAntiAliasing);
         return this;
@@ -388,6 +411,12 @@ public class MaterialBuilder {
     @NonNull
     public MaterialBuilder flipUV(boolean flipUV) {
         nMaterialBuilderFlipUV(mNativeObject, flipUV);
+        return this;
+    }
+
+    @NonNull
+    public MaterialBuilder customSurfaceShading(boolean customSurfaceShading) {
+        nMaterialBuilderCustomSurfaceShading(mNativeObject, customSurfaceShading);
         return this;
     }
 
@@ -523,9 +552,9 @@ public class MaterialBuilder {
     private static native void nMaterialBuilderShading(long nativeBuilder, int shading);
     private static native void nMaterialBuilderInterpolation(long nativeBuilder, int interpolation);
     private static native void nMaterialBuilderUniformParameter(long nativeBuilder, int type,
-            String name);
+            int precision, String name);
     private static native void nMaterialBuilderUniformParameterArray(long nativeBuilder, int type,
-            int size, String name);
+            int size, int precision, String name);
     private static native void nMaterialBuilderSamplerParameter(long nativeBuilder, int type,
             int format, int precision, String name);
     private static native void nMaterialBuilderVariable(long nativeBuilder, int variable,
@@ -545,6 +574,8 @@ public class MaterialBuilder {
 
     private static native void nMaterialBuilderShadowMultiplier(long mNativeObject,
             boolean shadowMultiplier);
+    private static native void nMaterialBuilderTransparentShadow(long mNativeObject,
+            boolean transparentShadow);
     private static native void nMaterialBuilderSpecularAntiAliasing(long mNativeObject,
             boolean specularAntiAliasing);
     private static native void nMaterialBuilderSpecularAntiAliasingVariance(long mNativeObject,
@@ -556,6 +587,8 @@ public class MaterialBuilder {
     private static native void nMaterialBuilderClearCoatIorChange(long mNativeObject,
             boolean clearCoatIorChange);
     private static native void nMaterialBuilderFlipUV(long nativeBuilder, boolean flipUV);
+    private static native void nMaterialBuilderCustomSurfaceShading(long nativeBuilder,
+            boolean customSurfaceShading);
     private static native void nMaterialBuilderMultiBounceAmbientOcclusion(long nativeBuilder,
             boolean multiBounceAO);
     private static native void nMaterialBuilderSpecularAmbientOcclusion(long nativeBuilder,

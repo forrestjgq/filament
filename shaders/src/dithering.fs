@@ -9,11 +9,7 @@
 #define DITHERING_TRIANGLE_NOISE       3
 #define DITHERING_TRIANGLE_NOISE_RGB   4
 
-#if defined(TARGET_MOBILE)
-    #define DITHERING_OPERATOR         DITHERING_TRIANGLE_NOISE
-#else
-    #define DITHERING_OPERATOR         DITHERING_TRIANGLE_NOISE
-#endif
+#define DITHERING_OPERATOR      DITHERING_TRIANGLE_NOISE
 
 //------------------------------------------------------------------------------
 // Noise
@@ -30,7 +26,7 @@ float triangleNoise(highp vec2 n) {
     return fract(xy * 95.4307) + fract(xy * 75.04961) - 1.0;
 }
 
-// n must not be normalize (e.g. window coordinates)
+// n must not be normalized (e.g. window coordinates)
 float interleavedGradientNoise(highp vec2 n) {
     return fract(52.982919 * fract(dot(vec2(0.06711, 0.00584), n)));
 }
@@ -97,7 +93,7 @@ vec4 Dither_TriangleNoiseRGB(vec4 rgba, const highp float temporalNoise01) {
 
 /**
  * Dithers the specified RGBA color based on the current time and fragment
- * coordinates the input must be in the final color space (including OECF).
+ * coordinates the input must be in the final color space (including OETF).
  * This dithering function assumes we are dithering to an 8-bit target.
  * This function dithers the alpha channel assuming premultiplied output
  */
