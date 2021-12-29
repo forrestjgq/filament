@@ -25,7 +25,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-namespace filament::backend {
+namespace filament {
+namespace backend {
 
 class CallbackHandler;
 
@@ -214,7 +215,8 @@ private:
     CallbackHandler* mHandler = nullptr;
 };
 
-} // namespace filament::backend
+} // namespace backend
+} // namespace filament
 
 #if !defined(NDEBUG)
 utils::io::ostream& operator<<(utils::io::ostream& out, const filament::backend::BufferDescriptor& b);

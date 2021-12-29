@@ -28,7 +28,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-namespace filament::backend {
+namespace filament {
+namespace backend {
 
 /**
  * A descriptor to an image in main memory, typically used to transfer image data from the CPU
@@ -308,7 +309,8 @@ public:
     uint8_t alignment  : 4;
 };
 
-} // namespace backend::filament
+} // namespace backend
+} // namespace filament
 
 #if !defined(NDEBUG)
 utils::io::ostream& operator<<(utils::io::ostream& out, const filament::backend::PixelBufferDescriptor& b);
