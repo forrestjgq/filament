@@ -39,7 +39,7 @@ public:
     TargetBufferInfo(Handle<HwTexture> h, uint8_t level, uint16_t layer) noexcept
             : handle(h), level(level), layer(layer) { }
 
-    explicit TargetBufferInfo(TextureCubemapFace face) noexcept : handle(Handle<HwTexture>::nullid, face(face) {}
+    explicit TargetBufferInfo(TextureCubemapFace face) noexcept : handle(Handle<HwTexture>::nullid), face(face) {}
 
     explicit TargetBufferInfo(uint16_t layer) noexcept : handle(Handle<HwTexture>::nullid), layer(layer) {}
 
